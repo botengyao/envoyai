@@ -90,7 +90,13 @@ Supported auto-download targets: `linux/amd64`, `linux/arm64`, `darwin/arm64`. O
 
 Typed classes for every backend: `OpenAI`, `AzureOpenAI`, `Bedrock`, `AWSAnthropic`, `Anthropic`, `Cohere`, `GCPVertex`, `GCPAnthropic`, and any OpenAI-compatible endpoint (vLLM, Ollama, text-generation-inference, self-hosted proxies) by passing `base_url` to `OpenAI`.
 
-**Today's runtime scope:** `gw.local()` / `gw.serve()` currently render configs for a single OpenAI provider per route with `ea.env(...)` auth. Fallbacks, weighted splits, retries, budgets, and providers other than OpenAI are accepted by the builder but raise a clear `NotImplementedError` from the renderer. Those land next — see the [changelog](CHANGELOG.md).
+**Today's runtime scope.** `gw.local()` / `gw.serve()` render and run for these configurations:
+
+- **Providers**: `OpenAI`, `Anthropic` (native API). Multiple providers coexist in one `Gateway`; each logical model can point at either.
+- **Auth**: `ea.env(...)` (rendered as `${VAR}` for `aigw`'s envsubst).
+- **One primary per route.** No fallbacks, no Split, no retry, no budget, no custom timeouts yet.
+
+Anything else the builder accepts (Bedrock, Azure, Vertex, Cohere, AWSAnthropic, GCPAnthropic, fallbacks, weighted splits, `RetryPolicy`, `Budget`, `Timeouts`) raises a clear `NotImplementedError` from the renderer and is landing release by release — see the [changelog](CHANGELOG.md).
 
 ## Examples
 
@@ -115,17 +121,26 @@ Typed classes for every backend: `OpenAI`, `AzureOpenAI`, `Bedrock`, `AWSAnthrop
 | 14 | [privacy](examples/14_privacy.py) | Redaction defaults and overrides |
 | 15 | [handling_errors](examples/15_handling_errors.py) | Build-time and request-time errors |
 
-Examples 02–15 document the target API. The builder accepts all of their configs today; the subset listed in **Today's runtime scope** above is what renders and runs through `aigw`. The rest will light up release by release — see the [changelog](CHANGELOG.md).
+The builder accepts every example's configuration today; the subset in **Today's runtime scope** above is what renders and runs through `aigw` right now. The rest will light up release by release — see the [changelog](CHANGELOG.md).
 
 ## Status
 
 Alpha. Shipped today:
 
-- Builder API — `Gateway`, providers, auth helpers, `RetryPolicy` / `Budget` / `Privacy` / `Timeouts`, typed errors.
-- `Gateway.local()` — renders → spawns `aigw` → probes readiness → returns a `LocalRun` handle.
-- `Gateway.serve()` — blocking foreground entrypoint for running as a persistent proxy.
-- `Gateway.complete()` / `acomplete()` and `envoyai.complete()` / `acomplete()` — dispatch through the local gateway.
+- **Builder API** — `Gateway`, eight provider classes, auth helpers (env/secret/header + `aws`/`azure`/`gcp` namespaces), `RetryPolicy` / `Budget` / `Privacy` / `Timeouts`, typed errors.
+- **Runtime** — `Gateway.local()` (background subprocess), `Gateway.serve()` (foreground), `Gateway.complete()` / `acomplete()`, module-level `envoyai.complete()` / `acomplete()` backed by an implicit singleton.
+- **Renderer** — `OpenAI` and `Anthropic` providers, one primary per route, `ea.env(...)` auth. Designed so each additional API-key provider is a one-row registry addition.
+- **Binary management** — first-call auto-download of the pinned `aigw` release, `envoyai download-aigw` / `where` / `version` CLI, `ENVOYAI_AIGW_PATH` escape hatch.
 
-Coming in upcoming releases: multi-provider rendering, fallback / Split / retry / budget rendering, `render_k8s()` / `apply()` / `deploy()` / `diff()` for Kubernetes, cost ledger against versioned price sheets, admin UI. Track progress in [`CHANGELOG.md`](CHANGELOG.md).
+Coming in upcoming releases, roughly in order:
+
+- **Bedrock renderer** (three AWS credential modes), then fallback + `RetryPolicy` rendering via `BackendTrafficPolicy` — together these turn the failover example into a real round-trip.
+- **Timeouts**, weighted Split, aliases.
+- **Cost ledger** against versioned price sheets; then `Budget` alerts and enforcement.
+- **Azure**, Cohere, GCP Vertex, AWSAnthropic, GCPAnthropic renderers.
+- **Kubernetes output** — `render_k8s()` / `apply()` / `diff()` / `deploy()`.
+- **Admin UI** backend + SPA.
+
+Track the detailed roadmap and every release's additions in [`CHANGELOG.md`](CHANGELOG.md).
 
 Developed at [github.com/botengyao/envoyai](https://github.com/botengyao/envoyai).
