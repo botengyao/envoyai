@@ -1,27 +1,75 @@
 """Render a :class:`envoyai.Gateway` into a multi-doc YAML that ``aigw run``
 consumes.
 
-Today's scope: a single OpenAI provider per route, with the API key supplied
-via :func:`envoyai.env` (``EnvVar``). Anything beyond that — fallbacks,
-Split routing, RetryPolicy, Budget, providers other than OpenAI — raises
-:class:`NotImplementedError` with a clear pointer rather than silently
-doing less than the user asked for.
+Today's scope: one provider per route, primary only (no fallbacks, no Split,
+no retry/budget/timeouts), and only the API-key-based providers — OpenAI and
+Anthropic — both with ``envoyai.env(...)`` auth. Anything beyond that raises
+:class:`NotImplementedError` with a clear pointer rather than silently doing
+less than the user asked for.
 
 Secrets use ``${VAR}`` placeholders so ``aigw run`` resolves them via
 ``envsubst`` at startup and the real key never lives on disk unencrypted.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 
 from envoyai.auth import EnvVar
+from envoyai.providers.anthropic import Anthropic
 from envoyai.providers.base import ModelRef
 from envoyai.providers.openai import OpenAI
 
 
 __all__ = ["render_yaml", "render_resources"]
+
+
+# ---------------------------------------------------------------------------
+# Per-provider spec — everything that differs between API-key providers.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _ApiKeyProviderSpec:
+    """Metadata the renderer needs to emit resources for one API-key provider.
+
+    The shared shape — ``AIServiceBackend`` + ``BackendSecurityPolicy`` +
+    ``Backend`` + ``BackendTLSPolicy`` + ``Secret`` — is identical across
+    these providers; only ``schema``, ``security_type``, the security
+    sub-field name, and the default upstream hostname change.
+    """
+
+    schema: str
+    security_type: str
+    security_subfield: str
+    default_hostname: str
+    backend_slug: str
+
+
+_API_KEY_PROVIDERS: dict[type, _ApiKeyProviderSpec] = {
+    OpenAI: _ApiKeyProviderSpec(
+        schema="OpenAI",
+        security_type="APIKey",
+        security_subfield="apiKey",
+        default_hostname="api.openai.com",
+        backend_slug="openai",
+    ),
+    Anthropic: _ApiKeyProviderSpec(
+        schema="Anthropic",
+        security_type="AnthropicAPIKey",
+        security_subfield="anthropicAPIKey",
+        default_hostname="api.anthropic.com",
+        backend_slug="anthropic",
+    ),
+}
+
+
+# ---------------------------------------------------------------------------
+# Public entry points
+# ---------------------------------------------------------------------------
 
 
 def render_yaml(gateway: Any, *, namespace: str = "default") -> str:
@@ -39,16 +87,16 @@ def render_resources(gateway: Any, *, namespace: str = "default") -> list[dict[s
 
     gateway_name = gateway.name or "envoyai-default"
     listener_port = gateway.port
-    backends: dict[str, OpenAI] = {}  # backend name → provider instance
+    backends: dict[str, Any] = {}  # backend name → provider instance
     rule_docs: list[dict[str, Any]] = []
 
     for logical, route in gateway._routes.items():
         _reject_unsupported_route(logical, route)
         primary = route._primary
-        assert isinstance(primary, ModelRef)  # narrowed by _reject_unsupported_route
+        assert isinstance(primary, ModelRef)
         provider = primary.provider
-        _reject_unsupported_provider(provider)
-        backend_name = _backend_name(gateway_name, provider)
+        spec = _reject_unsupported_provider(provider)
+        backend_name = _backend_name(gateway_name, provider, spec)
         backends[backend_name] = provider
         rule_docs.append(_route_rule(logical, primary, backend_name))
 
@@ -92,17 +140,21 @@ def _reject_unsupported_route(logical: str, route: Any) -> None:
         )
 
 
-def _reject_unsupported_provider(provider: Any) -> None:
-    if not isinstance(provider, OpenAI):
+def _reject_unsupported_provider(provider: Any) -> _ApiKeyProviderSpec:
+    """Return the renderer spec for ``provider`` or raise a clear error."""
+    spec = _API_KEY_PROVIDERS.get(type(provider))
+    if spec is None:
         raise _not_supported(
             f"provider type {type(provider).__name__} is not wired into the "
-            "aigw renderer yet; only OpenAI is supported today"
+            "aigw renderer yet; supported today: "
+            + ", ".join(sorted(p.__name__ for p in _API_KEY_PROVIDERS))
         )
     if not isinstance(provider.api_key, EnvVar):
         raise _not_supported(
-            "OpenAI.api_key must be envoyai.env(...) for the aigw renderer; "
-            "SecretRef / InlineKey support lands later"
+            f"{type(provider).__name__}.api_key must be envoyai.env(...) for "
+            "the aigw renderer; SecretRef / InlineKey support lands later"
         )
+    return spec
 
 
 def _not_supported(msg: str) -> NotImplementedError:
@@ -117,8 +169,10 @@ def _not_supported(msg: str) -> NotImplementedError:
 # ---------------------------------------------------------------------------
 
 
-def _backend_name(gateway_name: str, provider: OpenAI) -> str:
-    return provider.name or f"{gateway_name}-openai"
+def _backend_name(
+    gateway_name: str, provider: Any, spec: _ApiKeyProviderSpec
+) -> str:
+    return provider.name or f"{gateway_name}-{spec.backend_slug}"
 
 
 def _route_rule(logical: str, ref: ModelRef, backend_name: str) -> dict[str, Any]:
@@ -162,9 +216,10 @@ def _aigateway_route(
 
 
 def _provider_resources(
-    backend_name: str, namespace: str, provider: OpenAI
+    backend_name: str, namespace: str, provider: Any
 ) -> list[dict[str, Any]]:
-    hostname = _hostname(provider.base_url)
+    spec = _API_KEY_PROVIDERS[type(provider)]
+    hostname = _hostname(provider.base_url, default=spec.default_hostname)
     secret_name = f"{backend_name}-apikey"
     env_var = provider.api_key
     assert isinstance(env_var, EnvVar)
@@ -174,7 +229,7 @@ def _provider_resources(
             "kind": "AIServiceBackend",
             "metadata": {"name": backend_name, "namespace": namespace},
             "spec": {
-                "schema": {"name": "OpenAI"},
+                "schema": {"name": spec.schema},
                 "backendRef": {
                     "name": backend_name,
                     "kind": "Backend",
@@ -194,8 +249,8 @@ def _provider_resources(
                         "name": backend_name,
                     }
                 ],
-                "type": "APIKey",
-                "apiKey": {
+                "type": spec.security_type,
+                spec.security_subfield: {
                     "secretRef": {"name": secret_name, "namespace": namespace},
                 },
             },
@@ -253,8 +308,6 @@ def _gateway_cr(gateway_name: str, namespace: str, port: int) -> dict[str, Any]:
     }
 
 
-def _hostname(base_url: str) -> str:
-    from urllib.parse import urlparse
-
+def _hostname(base_url: str, *, default: str) -> str:
     parsed = urlparse(base_url)
-    return parsed.hostname or "api.openai.com"
+    return parsed.hostname or default

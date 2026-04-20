@@ -67,6 +67,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `envoyai version` (show the envoyai + pinned aigw versions).
 - Pinned `aigw` version: `0.5.0`. The envoyai release cadence bumps this
   alongside schema / renderer changes.
+- `aigw_standalone` renderer now supports the `envoyai.Anthropic`
+  provider alongside `envoyai.OpenAI`. Emits `AIServiceBackend`
+  (schema `Anthropic`), `BackendSecurityPolicy` (type
+  `AnthropicAPIKey`, sub-field `anthropicAPIKey`), and a
+  `Backend`+`BackendTLSPolicy` pair pointed at `api.anthropic.com`.
+  Multiple providers coexist in one `Gateway`, each on its own backend.
+  Renderer refactored to a provider-spec table so adding the next API-key
+  family is a one-row change. Unsupported providers now surface the list
+  of supported ones in the error message.
 - README reorganized: hero quick start, two-modes section, `Why envoyai`
   differentiators, and a flat index of `examples/`.
 - Smoke tests covering the public surface and the README example.
