@@ -296,42 +296,77 @@ class Gateway:
         self,
         *,
         admin_port: int = 1064,
-        ui_port: int | None = 1976,
         debug: bool = False,
-        docker: bool = False,
-    ) -> "LocalRun":
+        ready_timeout_s: float = 20.0,
+    ) -> LocalRun:
         """Run the gateway locally as a **background** process (SDK mode).
 
-        Returns quickly once the gateway is serving traffic. The calling
-        Python process stays free to make calls via :meth:`complete` /
-        :meth:`acomplete`, or via any OpenAI-compatible client pointed at
-        the configured port.
+        Renders the Gateway to an ``aigw``-compatible multi-doc YAML,
+        writes it to a temp file, spawns ``aigw run`` pointed at that
+        file, and polls until the HTTP port is accepting requests. Once
+        ready, marks ``self._running`` and returns the handle.
 
-        Returns a handle with ``.stop()``, ``.port``, ``.admin_port``.
+        The calling Python process stays free to make calls via
+        :meth:`complete` / :meth:`acomplete`, or via any OpenAI-compatible
+        client pointed at ``http://127.0.0.1:<port>``.
 
         For the foreground / long-running service use case (where the same
         process *is* the proxy), use :meth:`serve`.
+
+        Requires the ``aigw`` binary on PATH.
         """
-        raise NotImplementedError("Gateway.local() is coming in the next release.")
+        from envoyai._internal import aigw_process
+        from envoyai._internal.render.aigw_standalone import render_yaml
+
+        self._validate()
+        yaml_text = render_yaml(self)
+        config_path = aigw_process.write_config(yaml_text)
+        proc = aigw_process.spawn_background(
+            config_path, admin_port=admin_port, debug=debug
+        )
+        try:
+            aigw_process.probe_ready(self.port, timeout_s=ready_timeout_s)
+        except Exception:
+            aigw_process.stop_background(proc)
+            config_path.unlink(missing_ok=True)
+            raise
+        run = LocalRun(
+            port=self.port,
+            admin_port=admin_port,
+            _proc=proc,
+            _config_path=config_path,
+        )
+        self._running = run
+        return run
 
     def serve(
         self,
         *,
-        port: int | None = None,
         admin_port: int = 1064,
         debug: bool = False,
-    ) -> None:
+    ) -> int:
         """Run the gateway in the **foreground** until signaled (Proxy mode).
 
-        Blocks the calling process; installs signal handlers for SIGINT
-        (Ctrl-C) and SIGTERM to shut the gateway down cleanly. Use this
-        as the entrypoint for running envoyai as a persistent service —
-        any OpenAI-compatible client in any language can hit the port.
+        Blocks the calling process; ``aigw`` receives SIGINT / SIGTERM
+        directly from the shell so Ctrl-C shuts it down cleanly. Returns
+        ``aigw``'s exit code when it terminates.
 
-        Does **not** return. For the background / same-process use case,
-        use :meth:`local`.
+        For the background / same-process use case, use :meth:`local`.
+
+        Requires the ``aigw`` binary on PATH.
         """
-        raise NotImplementedError("Gateway.serve() is coming in the next release.")
+        from envoyai._internal import aigw_process
+        from envoyai._internal.render.aigw_standalone import render_yaml
+
+        self._validate()
+        yaml_text = render_yaml(self)
+        config_path = aigw_process.write_config(yaml_text)
+        try:
+            return aigw_process.run_foreground(
+                config_path, admin_port=admin_port, debug=debug
+            )
+        finally:
+            config_path.unlink(missing_ok=True)
 
     def render_k8s(
         self,

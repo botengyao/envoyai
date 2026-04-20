@@ -37,6 +37,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `examples/00_two_liner.py` — the two-line quickstart.
 - Examples renamed env vars to SDK conventions (`OPENAI_API_KEY`,
   `ANTHROPIC_API_KEY`, `AZURE_OPENAI_API_KEY`, `COHERE_API_KEY`).
+- `Gateway.local()` and `Gateway.serve()` now actually run: they render
+  the Gateway to an `aigw`-compatible multi-doc YAML, spawn
+  `aigw run <path>`, probe readiness on the data-plane port, and (for
+  `local()`) return a `LocalRun` handle whose `.stop()` cleans up the
+  subprocess and temp config. `Gateway.complete()` / `.acomplete()`
+  dispatch through the resulting port rather than calling providers
+  directly, so provider translation, routing, and auth injection all
+  happen in the Envoy subprocess.
+- Private `envoyai._internal.render.aigw_standalone` renders the YAML.
+  Current scope: single OpenAI provider per route, API keys supplied via
+  `envoyai.env(...)` (rendered as `${VAR}` placeholders so `aigw`'s
+  envsubst resolves them at startup). Fallbacks, Split, retry, budgets,
+  and other providers raise `NotImplementedError` with a clear pointer.
+- Private `envoyai._internal.aigw_process` wraps the subprocess
+  lifecycle (`find_aigw`, `spawn_background`, `run_foreground`,
+  `probe_ready`, `stop_background`).
+- New tests: renderer resource shapes, `local()` glue (mocked
+  subprocess), `serve()` foreground path, missing-`aigw` error, and a
+  skipped-by-default end-to-end integration test that runs when
+  `aigw` is installed and `OPENAI_API_KEY` is set.
 - README reorganized: hero quick start, two-modes section, `Why envoyai`
   differentiators, and a flat index of `examples/`.
 - Smoke tests covering the public surface and the README example.
