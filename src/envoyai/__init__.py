@@ -32,7 +32,7 @@ from envoyai.providers import (
 from envoyai.auth import env, header, secret
 from envoyai.auth import aws, azure, gcp
 
-from envoyai.policy import Budget, RetryPolicy, Timeouts
+from envoyai.policy import Budget, Privacy, RetryPolicy, Timeouts
 
 from envoyai import errors
 
@@ -60,6 +60,7 @@ __all__ = [
     "RetryPolicy",
     "Budget",
     "Timeouts",
+    "Privacy",
     # Errors namespace
     "errors",
 ]

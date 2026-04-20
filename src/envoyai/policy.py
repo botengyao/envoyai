@@ -90,3 +90,28 @@ class Timeouts(BaseModel):
 
     request: str = "60s"
     provider: str | None = None
+
+
+class Privacy(BaseModel):
+    """Control what the gateway is allowed to log or forward to observability.
+
+    Defaults are deliberately safe: auth headers are redacted; prompts and
+    responses are logged as metadata (token counts, latency, cost) but their
+    **content** is not exported to logs or callbacks. Flip the toggles only
+    when you have a concrete reason.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    redact_auth: bool = True
+    """Strip ``Authorization``, ``api-key``, ``x-api-key`` and similar
+    request/response headers from logs, traces, and callbacks."""
+
+    log_prompts: bool = False
+    """When True, request body content (prompts, messages, tools) is logged
+    in full. When False (default), only metadata is logged."""
+
+    log_responses: bool = False
+    """When True, response body content (completions) is logged in full.
+    When False (default), only metadata is logged."""
+

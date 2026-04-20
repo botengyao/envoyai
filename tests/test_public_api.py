@@ -71,6 +71,24 @@ def test_provider_is_callable_returning_model_ref() -> None:
     assert ref.provider is openai
 
 
+def test_privacy_defaults_are_safe() -> None:
+    """Default Privacy redacts auth and does not log prompt/response bodies."""
+    p = ea.Privacy()
+    assert p.redact_auth is True
+    assert p.log_prompts is False
+    assert p.log_responses is False
+
+
+def test_gateway_privacy_can_be_overridden() -> None:
+    gw = ea.Gateway()
+    openai = ea.OpenAI(api_key=ea.env("K"))
+    gw.model("m").route(primary=openai("gpt-4o"))
+
+    gw.privacy(ea.Privacy(redact_auth=True, log_prompts=True, log_responses=False))
+    assert gw._privacy.log_prompts is True
+    assert gw._privacy.log_responses is False
+
+
 def test_alias_requires_existing_target() -> None:
     gw = ea.Gateway("t")
     openai = ea.OpenAI(api_key=ea.env("K"))

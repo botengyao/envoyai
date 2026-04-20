@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Iterable
 
 from envoyai.auth import Header
 from envoyai.errors import ConfigError, ModelNotFound
-from envoyai.policy import Budget, RetryPolicy, Timeouts
+from envoyai.policy import Budget, Privacy, RetryPolicy, Timeouts
 from envoyai.providers.base import ModelRef
 
 if TYPE_CHECKING:
@@ -119,6 +119,7 @@ class Gateway:
         self._routes: dict[str, Route] = {}
         self._cost_tracking: dict[str, Any] | None = None
         self._aliases: dict[str, str] = {}
+        self._privacy: Privacy = Privacy()
 
     # --- model / route building ---------------------------------------------
 
@@ -138,6 +139,15 @@ class Gateway:
         if target not in self._routes:
             raise ModelNotFound(target, known=list(self._routes))
         self._aliases[alias] = target
+        return self
+
+    def privacy(self, policy: Privacy) -> "Gateway":
+        """Override the gateway's logging/redaction defaults.
+
+        Defaults are safe: ``Privacy(redact_auth=True, log_prompts=False,
+        log_responses=False)``. Call this only if you need content in logs.
+        """
+        self._privacy = policy
         return self
 
     def track_cost(
