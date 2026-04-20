@@ -15,7 +15,7 @@ assume a cluster.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence, Union
 
 from envoyai.auth import Header
 from envoyai.errors import ConfigError, ModelNotFound
@@ -23,8 +23,18 @@ from envoyai.policy import Budget, Privacy, RetryPolicy, Timeouts
 from envoyai.providers.base import ModelRef
 
 if TYPE_CHECKING:
+    from openai.types.chat import ChatCompletion
+
     from envoyai._internal.render import RenderedManifests
     from envoyai._internal.runtime import LocalRun
+
+
+ChatMessage = Mapping[str, Any]
+"""An OpenAI-format chat message, e.g. ``{"role": "user", "content": "hi"}``.
+
+Structural typing — any mapping with the right keys works. Users who want the
+full typed shape can import :class:`openai.types.chat.ChatCompletionMessageParam`.
+"""
 
 
 Split = dict["ModelRef", int]
@@ -177,6 +187,80 @@ class Gateway:
         """
         raise NotImplementedError("Gateway.quickstart() is coming in the next release.")
 
+    # --- calls (SDK mode) ---------------------------------------------------
+
+    def complete(
+        self,
+        model: str,
+        messages: Union[str, Sequence[ChatMessage]],
+        *,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        tools: Sequence[Mapping[str, Any]] | None = None,
+        tool_choice: Union[str, Mapping[str, Any], None] = None,
+        provider_options: Mapping[str, Any] | None = None,
+        timeout: str | None = None,
+    ) -> ChatCompletion:
+        """Send one chat completion synchronously through this gateway.
+
+        **Sync/async contract.** This method is sync; :meth:`acomplete` is
+        async. The return type is always a single ``ChatCompletion`` — never
+        a coroutine, never a stream, never a union. Kwargs do not change the
+        return type.
+
+        **Streaming.** Not supported by this method on purpose (return types
+        would depend on kwargs). For streaming today, use the OpenAI SDK
+        against the gateway's URL directly; a dedicated streaming API will
+        land as a separate method.
+
+        **Messages.** Accepts either an OpenAI-format message sequence or a
+        bare string; a string is auto-wrapped as ``[{"role": "user",
+        "content": <s>}]``.
+
+        **Provider-specific knobs.** Go in ``provider_options``. Unknown keys
+        raise :class:`envoyai.errors.ConfigError`; they are never silently
+        dropped.
+
+        **Prereq.** The gateway must be running — call :meth:`local` first,
+        or have a gateway running at the configured URL.
+
+        Raises
+        ------
+        envoyai.errors.ModelNotFound
+            ``model`` isn't registered on this Gateway.
+        envoyai.errors.ProviderUnavailable
+            Every configured provider (primary + fallbacks) failed.
+        envoyai.errors.RateLimited
+            Provider rate-limited the request; ``retry_after_s`` is
+            populated on the exception.
+        envoyai.errors.BudgetExceeded
+            A budget with ``enforce_at`` was crossed.
+        """
+        raise NotImplementedError("Gateway.complete() is coming in the next release.")
+
+    async def acomplete(
+        self,
+        model: str,
+        messages: Union[str, Sequence[ChatMessage]],
+        *,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        tools: Sequence[Mapping[str, Any]] | None = None,
+        tool_choice: Union[str, Mapping[str, Any], None] = None,
+        provider_options: Mapping[str, Any] | None = None,
+        timeout: str | None = None,
+    ) -> ChatCompletion:
+        """Send one chat completion asynchronously through this gateway.
+
+        **Sync/async contract.** This coroutine must be awaited and resolves
+        to the same ``ChatCompletion`` type that :meth:`complete` returns.
+        Sync vs async is determined entirely by which method you call —
+        never by a kwarg.
+
+        See :meth:`complete` for argument, error, and streaming semantics.
+        """
+        raise NotImplementedError("Gateway.acomplete() is coming in the next release.")
+
     # --- outputs ------------------------------------------------------------
 
     def local(
@@ -187,12 +271,38 @@ class Gateway:
         debug: bool = False,
         docker: bool = False,
     ) -> "LocalRun":
-        """Run the gateway locally as a background process.
+        """Run the gateway locally as a **background** process (SDK mode).
 
-        Blocks until the gateway is serving traffic, then returns a handle
-        exposing ``.stop()``, ``.port``, ``.admin_port``, and ``.client()``.
+        Returns quickly once the gateway is serving traffic. The calling
+        Python process stays free to make calls via :meth:`complete` /
+        :meth:`acomplete`, or via any OpenAI-compatible client pointed at
+        the configured port.
+
+        Returns a handle with ``.stop()``, ``.port``, ``.admin_port``.
+
+        For the foreground / long-running service use case (where the same
+        process *is* the proxy), use :meth:`serve`.
         """
         raise NotImplementedError("Gateway.local() is coming in the next release.")
+
+    def serve(
+        self,
+        *,
+        port: int | None = None,
+        admin_port: int = 1064,
+        debug: bool = False,
+    ) -> None:
+        """Run the gateway in the **foreground** until signaled (Proxy mode).
+
+        Blocks the calling process; installs signal handlers for SIGINT
+        (Ctrl-C) and SIGTERM to shut the gateway down cleanly. Use this
+        as the entrypoint for running envoyai as a persistent service —
+        any OpenAI-compatible client in any language can hit the port.
+
+        Does **not** return. For the background / same-process use case,
+        use :meth:`local`.
+        """
+        raise NotImplementedError("Gateway.serve() is coming in the next release.")
 
     def render_k8s(
         self,
