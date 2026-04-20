@@ -11,10 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Initial scaffold: `Gateway` builder, eight providers (OpenAI, AzureOpenAI,
   Bedrock, AWSAnthropic, Anthropic, Cohere, GCPVertex, GCPAnthropic), auth
   helpers (`env`, `secret`, `header`, `aws`, `azure`, `gcp`), policy types
-  (`RetryPolicy`, `Budget`, `Timeouts`), typed error hierarchy.
+  (`RetryPolicy`, `Budget`, `Timeouts`, `Privacy`), typed error hierarchy.
 - Target outputs on `Gateway`: `.local()`, `.deploy()`, `.render_k8s()`,
   `.apply()`, `.diff()` — currently stubs raising `NotImplementedError`.
-- README with laptop and ship-to-Kubernetes flows.
+- `examples/` directory with 15 small, self-contained scripts covering
+  common tasks: hello world, multi-provider setup, failover, canary splits,
+  streaming, tool use, embeddings, vision, async, custom retry, per-team
+  budgets, aliases, self-hosted upstreams, privacy, error handling.
+- README reorganized around the laptop path and the `examples/` index.
 - Smoke tests covering the public surface and the README example.
 
 ### Changed
