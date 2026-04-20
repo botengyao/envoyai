@@ -8,7 +8,7 @@ from __future__ import annotations
 import envoyai as ea
 from openai import OpenAI
 
-openai = ea.OpenAI(api_key=ea.env("OPENAI_KEY"))
+openai = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
 
 gw = ea.Gateway()
 gw.model("embed-small").route(primary=openai("text-embedding-3-small"))

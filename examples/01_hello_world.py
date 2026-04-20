@@ -2,7 +2,7 @@
 
 Single OpenAI model, laptop-only. Shortest possible envoyai setup.
 
-Requires OPENAI_KEY in the environment and — for the call below —
+Requires OPENAI_API_KEY in the environment and — for the call below —
 ``envoyai[client]`` to pull in the OpenAI SDK.
 
 Runtime note: ``gw.local()`` is a stub until the envoyai runtime lands.
@@ -14,7 +14,7 @@ from openai import OpenAI
 
 gw = ea.Gateway()
 gw.model("chat").route(
-    primary=ea.OpenAI(api_key=ea.env("OPENAI_KEY"))("gpt-4o-mini")
+    primary=ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))("gpt-4o-mini")
 )
 
 gw.local()  # gateway on http://localhost:1975

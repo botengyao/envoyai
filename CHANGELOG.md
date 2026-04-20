@@ -24,6 +24,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   async is by method name; return type is fixed regardless of kwargs.
 - `Gateway.serve(...)` — blocking foreground entrypoint for running the
   gateway as a persistent proxy service. Counterpart to `local()`.
+- `envoyai.complete(model=..., messages=...)` and `envoyai.acomplete(...)`
+  — module-level shortcuts backed by a process-wide singleton Gateway,
+  created lazily on first call and torn down via `atexit`. Bare model
+  names auto-register through a small catalog (`gpt-*` → OpenAI,
+  `claude-*` → Anthropic, `anthropic.*` / `amazon.*` / `meta.*` →
+  Bedrock, `command-*` / `rerank-*` → Cohere); the explicit
+  `"provider/model"` form is always accepted. Auto-configuration uses
+  SDK-conventional env vars: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+  `COHERE_API_KEY`, plus the AWS default credential chain and
+  `AWS_REGION` for Bedrock.
+- `examples/00_two_liner.py` — the two-line quickstart.
+- Examples renamed env vars to SDK conventions (`OPENAI_API_KEY`,
+  `ANTHROPIC_API_KEY`, `AZURE_OPENAI_API_KEY`, `COHERE_API_KEY`).
 - README reorganized: hero quick start, two-modes section, `Why envoyai`
   differentiators, and a flat index of `examples/`.
 - Smoke tests covering the public surface and the README example.

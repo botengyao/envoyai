@@ -11,7 +11,7 @@ import envoyai as ea
 from openai import AsyncOpenAI
 
 gw = ea.Gateway()
-gw.model("chat").route(primary=ea.OpenAI(api_key=ea.env("OPENAI_KEY"))("gpt-4o-mini"))
+gw.model("chat").route(primary=ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))("gpt-4o-mini"))
 gw.local()
 
 

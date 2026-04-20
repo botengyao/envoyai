@@ -1,12 +1,20 @@
 # envoyai
 
-**A production-grade LLM gateway, configured in Python.** Define providers, routes, fallbacks, retries, budgets, and privacy in one typed Python file — run it on your laptop with one line, or ship it to Kubernetes with one line. Built on [Envoy AI Gateway](https://github.com/envoyproxy/ai-gateway). No YAML, no cluster knowledge, no client-side provider juggling.
+**A production-grade LLM gateway, configured in Python.** Two lines for the quickstart, typed Python for anything beyond — run it on your laptop with one line, or ship it to Kubernetes with one line. Built on [Envoy AI Gateway](https://github.com/envoyproxy/ai-gateway). No YAML, no cluster knowledge, no client-side provider juggling.
+
+```python
+import envoyai as ea
+resp = ea.complete(model="gpt-4o-mini",
+                   messages=[{"role": "user", "content": "hi"}])
+```
+
+Two lines. An implicit, process-wide gateway starts on first call; `$OPENAI_API_KEY` is read from the environment; `gpt-*` / `claude-*` / `anthropic.*` / `command-*` model names auto-register to the right provider. When you want explicit control, drop down to the full builder:
 
 ```python
 import envoyai as ea
 
-openai    = ea.OpenAI(api_key=ea.env("OPENAI_KEY"))
-anthropic = ea.Anthropic(api_key=ea.env("ANTHROPIC_KEY"))
+openai    = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
+anthropic = ea.Anthropic(api_key=ea.env("ANTHROPIC_API_KEY"))
 
 gw = ea.Gateway()
 gw.model("chat").route(

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import envoyai as ea
 
-openai = ea.OpenAI(api_key=ea.env("OPENAI_KEY"))
+openai = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
 
 gw = ea.Gateway()
 gw.model("chat").route(primary=openai("gpt-4o"))

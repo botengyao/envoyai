@@ -8,13 +8,13 @@ from __future__ import annotations
 
 import envoyai as ea
 
-openai    = ea.OpenAI    (api_key=ea.env("OPENAI_KEY"))
-anthropic = ea.Anthropic (api_key=ea.env("ANTHROPIC_KEY"))
-cohere    = ea.Cohere    (api_key=ea.env("COHERE_KEY"))
+openai    = ea.OpenAI    (api_key=ea.env("OPENAI_API_KEY"))
+anthropic = ea.Anthropic (api_key=ea.env("ANTHROPIC_API_KEY"))
+cohere    = ea.Cohere    (api_key=ea.env("COHERE_API_KEY"))
 azure     = ea.AzureOpenAI(
     resource="myresource",
     api_version="2025-01-01-preview",
-    credentials=ea.azure.api_key(ea.env("AZURE_KEY")),
+    credentials=ea.azure.api_key(ea.env("AZURE_OPENAI_API_KEY")),
 )
 bedrock   = ea.Bedrock   (region="us-east-1", credentials=ea.aws.irsa())
 vertex    = ea.GCPVertex (

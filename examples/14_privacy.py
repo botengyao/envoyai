@@ -10,7 +10,7 @@ import envoyai as ea
 
 gw = ea.Gateway()
 gw.model("chat").route(
-    primary=ea.OpenAI(api_key=ea.env("OPENAI_KEY"))("gpt-4o")
+    primary=ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))("gpt-4o")
 )
 
 # Default: equivalent to ea.Privacy(redact_auth=True, log_prompts=False, log_responses=False)

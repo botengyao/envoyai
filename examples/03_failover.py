@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import envoyai as ea
 
-openai    = ea.OpenAI(api_key=ea.env("OPENAI_KEY"))
-anthropic = ea.Anthropic(api_key=ea.env("ANTHROPIC_KEY"))
+openai    = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
+anthropic = ea.Anthropic(api_key=ea.env("ANTHROPIC_API_KEY"))
 bedrock   = ea.Bedrock(region="us-east-1", credentials=ea.aws.irsa())
 
 gw = ea.Gateway()

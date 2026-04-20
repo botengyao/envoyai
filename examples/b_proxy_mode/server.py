@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import envoyai as ea
 
-openai    = ea.OpenAI(api_key=ea.env("OPENAI_KEY"))
-anthropic = ea.Anthropic(api_key=ea.env("ANTHROPIC_KEY"))
+openai    = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
+anthropic = ea.Anthropic(api_key=ea.env("ANTHROPIC_API_KEY"))
 
 gw = ea.Gateway()
 gw.model("chat").route(

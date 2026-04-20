@@ -1,14 +1,14 @@
 # Examples
 
-envoyai runs in two modes. Pick the one that matches how you want to run the
-gateway; the configuration is identical.
+Three entry points depending on how much you want to spell out.
 
-## Two modes
+## Entry points
 
-| Mode | Start with | Good for |
+| Style | File | When to use |
 |---|---|---|
-| **SDK mode** — [`a_sdk_mode.py`](a_sdk_mode.py) | `gw.local()` + `gw.complete()` | Scripts, notebooks, single-process prototypes, CI jobs |
-| **Proxy mode** — [`b_proxy_mode/`](b_proxy_mode/) | `gw.serve()` (blocks) + any OpenAI client | Multi-language stacks, shared dev servers, production |
+| **Two-liner** — [`00_two_liner.py`](00_two_liner.py) | `ea.complete(model=..., messages=...)` with an implicit singleton gateway | Quick scripts, trying it out, one-off calls |
+| **SDK mode** — [`a_sdk_mode.py`](a_sdk_mode.py) | `gw = ea.Gateway()` + `gw.local()` + `gw.complete()` | Scripts and services that build an explicit gateway in the same Python process |
+| **Proxy mode** — [`b_proxy_mode/`](b_proxy_mode/) | `gw.serve()` blocking + any OpenAI client (any language) | Multi-language stacks, shared dev servers, production deployments |
 
 ## Feature examples
 
@@ -38,9 +38,10 @@ against `localhost:1975` to show the call shape.
 
 ```bash
 pip install envoyai[client]
-export OPENAI_KEY=sk-...              # or whichever vars each example uses
-python examples/a_sdk_mode.py
+export OPENAI_API_KEY=sk-...              # or whichever vars each example uses
+python examples/00_two_liner.py
 ```
 
-Environment variables referenced across examples: `OPENAI_KEY`,
-`ANTHROPIC_KEY`, `AZURE_KEY`, `COHERE_KEY`, `OLLAMA_KEY`, `VLLM_KEY`.
+Environment variables referenced across examples: `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, `AZURE_OPENAI_API_KEY`, `COHERE_API_KEY`, `AWS_REGION`,
+`OLLAMA_KEY`, `VLLM_KEY`.

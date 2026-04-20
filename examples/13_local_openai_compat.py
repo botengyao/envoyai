@@ -16,7 +16,7 @@ vllm = ea.OpenAI(
     api_key=ea.env("VLLM_KEY"),
     base_url="http://vllm.internal:8000",
 )
-cloud = ea.OpenAI(api_key=ea.env("OPENAI_KEY"))
+cloud = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
 
 gw = ea.Gateway()
 # Prefer self-hosted for cheap traffic; spill over to cloud under load.
