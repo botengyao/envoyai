@@ -1,20 +1,15 @@
 """End-to-end integration: actually spawn ``aigw`` and hit it.
 
-Skipped when the ``aigw`` binary isn't on PATH or ``OPENAI_API_KEY`` isn't
-set. When both are present and an outbound network is available, this
-test validates that:
+Opt-in via ``ENVOYAI_RUN_INTEGRATION=1`` (and ``OPENAI_API_KEY``) so the
+default ``pytest`` run stays hermetic. When enabled, this test:
 
-- ``Gateway.local()`` produces a running subprocess;
-- the gateway's ``/v1/models`` endpoint answers;
-- ``gw.complete()`` round-trips a real chat completion through OpenAI.
-
-This is the only test in the suite that makes outbound calls; keep it
-isolated from the hermetic unit tests.
+- runs ``Gateway.local()``, which may download ``aigw`` on first use;
+- confirms the gateway answers on its port;
+- round-trips a real chat completion through OpenAI.
 """
 from __future__ import annotations
 
 import os
-import shutil
 
 import pytest
 
@@ -23,8 +18,8 @@ import envoyai as ea
 
 pytestmark = [
     pytest.mark.skipif(
-        shutil.which("aigw") is None,
-        reason="aigw binary not on PATH",
+        not os.environ.get("ENVOYAI_RUN_INTEGRATION"),
+        reason="set ENVOYAI_RUN_INTEGRATION=1 to run",
     ),
     pytest.mark.skipif(
         not os.environ.get("OPENAI_API_KEY"),

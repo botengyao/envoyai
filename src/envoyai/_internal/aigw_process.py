@@ -8,7 +8,6 @@ waits for readiness, and exposes a clean ``stop()`` path.
 from __future__ import annotations
 
 import os
-import shutil
 import signal
 import subprocess
 import sys
@@ -29,17 +28,17 @@ __all__ = [
 ]
 
 
-def find_aigw() -> Path:
-    """Locate the ``aigw`` binary on PATH. Raise a helpful error if missing."""
-    path = shutil.which("aigw")
-    if not path:
-        raise LocalRunError(
-            "The 'aigw' binary was not found on PATH. Install it from "
-            "https://github.com/envoyproxy/ai-gateway (e.g. "
-            "'go install github.com/envoyproxy/ai-gateway/cmd/aigw@latest') "
-            "and ensure the install dir is on your PATH."
-        )
-    return Path(path)
+def find_aigw(*, auto_download: bool = True, verbose: bool = True) -> Path:
+    """Locate the ``aigw`` binary.
+
+    Resolution order is ``$ENVOYAI_AIGW_PATH`` → ``$PATH`` → envoyai cache
+    → download-and-cache. See
+    :func:`envoyai._internal.aigw_bootstrap.resolve_binary` for the full
+    semantics.
+    """
+    from envoyai._internal.aigw_bootstrap import resolve_binary
+
+    return resolve_binary(auto_download=auto_download, verbose=verbose)
 
 
 def write_config(yaml_text: str, *, prefix: str = "envoyai-") -> Path:

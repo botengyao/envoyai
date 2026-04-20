@@ -206,12 +206,13 @@ def test_complete_rejects_unknown_model(fake_openai: dict[str, list[Any]]) -> No
         gw.complete("not-registered", "hi")
 
 
-def test_serve_without_aigw_on_path_raises_local_run_error(
+def test_serve_with_unresolvable_aigw_path_raises_local_run_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """``serve()`` fails fast with a clear LocalRunError when aigw isn't
-    installed, instead of a cryptic FileNotFoundError from subprocess."""
-    monkeypatch.setattr("shutil.which", lambda _name: None)
+    """``serve()`` fails fast with a clear LocalRunError when the user-supplied
+    ``ENVOYAI_AIGW_PATH`` doesn't point at a real file — no subprocess, no
+    auto-download attempt, no cryptic OSError."""
+    monkeypatch.setenv("ENVOYAI_AIGW_PATH", "/nonexistent/aigw")
     gw = _make_gateway()
-    with pytest.raises(ea.errors.LocalRunError, match="aigw"):
+    with pytest.raises(ea.errors.LocalRunError, match="ENVOYAI_AIGW_PATH"):
         gw.serve()

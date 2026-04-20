@@ -57,6 +57,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   subprocess), `serve()` foreground path, missing-`aigw` error, and a
   skipped-by-default end-to-end integration test that runs when
   `aigw` is installed and `OPENAI_API_KEY` is set.
+- `aigw` auto-download: `Gateway.local()` / `Gateway.serve()` resolve
+  the binary in the order `$ENVOYAI_AIGW_PATH` → `$PATH` →
+  `~/.cache/envoyai/bin/aigw-<version>` → download-and-cache from
+  GitHub releases. Users no longer need `go install` as a prerequisite.
+- `envoyai` CLI with three subcommands:
+  `envoyai download-aigw` (pre-fetch the pinned binary for CI /
+  Dockerfile `RUN`), `envoyai where` (print the resolved path), and
+  `envoyai version` (show the envoyai + pinned aigw versions).
+- Pinned `aigw` version: `0.5.0`. The envoyai release cadence bumps this
+  alongside schema / renderer changes.
 - README reorganized: hero quick start, two-modes section, `Why envoyai`
   differentiators, and a flat index of `examples/`.
 - Smoke tests covering the public surface and the README example.

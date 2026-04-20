@@ -4,15 +4,12 @@
 
 ## Quick start
 
-Install the library and the `aigw` binary (envoyai spawns `aigw` as a subprocess to host Envoy locally):
-
 ```bash
 pip install envoyai[client]
-go install github.com/envoyproxy/ai-gateway/cmd/aigw@latest   # or grab a release
 export OPENAI_API_KEY=sk-...
 ```
 
-Two lines:
+Two lines of Python:
 
 ```python
 import envoyai as ea
@@ -76,13 +73,18 @@ pip install envoyai[admin]       # + admin UI backend (coming)
 pip install envoyai[dev]         # + pytest, mypy, ruff for contributors
 ```
 
-Also install the `aigw` binary — envoyai spawns it to host Envoy locally:
+On the first call to `gw.local()` / `gw.serve()`, envoyai downloads the pinned [`aigw`](https://github.com/envoyproxy/ai-gateway) binary into `~/.cache/envoyai/bin/` and runs from there — no Go toolchain required. Subsequent calls reuse the cache.
 
-```bash
-go install github.com/envoyproxy/ai-gateway/cmd/aigw@latest
-```
+Escape hatches for the auto-download:
 
-`gw.local()` and `gw.serve()` raise `envoyai.errors.LocalRunError` with a clear message if `aigw` isn't on `PATH`.
+| | |
+|---|---|
+| **Pre-fetch** | `envoyai download-aigw` (useful in CI, Dockerfile `RUN`, air-gapped installs) |
+| **Bring your own binary** | `export ENVOYAI_AIGW_PATH=/path/to/aigw` |
+| **Use a `$PATH` install** | `brew install aigw` or `go install github.com/envoyproxy/ai-gateway/cmd/aigw@latest` — anything on `PATH` wins over the cache |
+| **Check what got resolved** | `envoyai where` |
+
+Supported auto-download targets: `linux/amd64`, `linux/arm64`, `darwin/arm64`. Other platforms need a locally-built binary (set `ENVOYAI_AIGW_PATH`).
 
 ## Providers
 
