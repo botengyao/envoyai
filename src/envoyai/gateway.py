@@ -246,9 +246,69 @@ class Gateway:
     # --- internal -----------------------------------------------------------
 
     def _validate(self) -> None:
+        """Structurally validate the Gateway, collecting every problem at once.
+
+        Called automatically before :meth:`local`, :meth:`render_k8s`,
+        :meth:`deploy`, and :meth:`apply`. Users can call it directly to fail
+        fast in tests. All detected errors are reported in a single
+        :class:`ConfigError` so callers fix everything in one edit cycle, not
+        one-error-per-run like LiteLLM's runtime-first surprises.
+        """
+        problems: list[str] = []
+
         if not self._routes:
-            raise ConfigError(
+            problems.append(
                 "gateway has no models; call .model(name).route(...) before building"
             )
-        for route in self._routes.values():
-            route._validate()
+
+        for name, route in self._routes.items():
+            if route._primary is None:
+                problems.append(
+                    f"model '{name}' has no primary; call .route(primary=...)"
+                )
+            for ref in _iter_model_refs(route._primary):
+                _check_ref(problems, f"model '{name}' primary", ref)
+            for i, fb in enumerate(route._fallbacks):
+                for ref in _iter_model_refs(fb):
+                    _check_ref(problems, f"model '{name}' fallback #{i}", ref)
+
+        for alias, target in self._aliases.items():
+            if target not in self._routes:
+                problems.append(
+                    f"alias '{alias}' targets unknown model '{target}'; "
+                    f"registered models: {sorted(self._routes)}"
+                )
+
+        if problems:
+            raise ConfigError(
+                "gateway configuration has {n} problem{s}:\n  - {body}".format(
+                    n=len(problems),
+                    s="" if len(problems) == 1 else "s",
+                    body="\n  - ".join(problems),
+                )
+            )
+
+
+def _iter_model_refs(spec: Any) -> Iterable[ModelRef]:
+    """Yield every ``ModelRef`` inside a primary/fallback spec.
+
+    Accepts either a single ``ModelRef`` or a ``Split`` dict mapping
+    ``ModelRef`` to weight. Anything else is silently skipped here — the
+    spec's type is caught by the route-level checks.
+    """
+    if spec is None:
+        return
+    if isinstance(spec, ModelRef):
+        yield spec
+        return
+    if isinstance(spec, dict):
+        for k in spec:
+            if isinstance(k, ModelRef):
+                yield k
+
+
+def _check_ref(problems: list[str], where: str, ref: ModelRef) -> None:
+    if not ref.model:
+        problems.append(f"{where}: empty model name")
+    if ref.weight < 0:
+        problems.append(f"{where}: negative weight {ref.weight}")
