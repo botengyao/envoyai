@@ -34,6 +34,8 @@ from envoyai.auth import aws, azure, gcp
 
 from envoyai.policy import Budget, Privacy, RetryPolicy, Timeouts
 
+from envoyai._internal.calls import acomplete, complete
+
 from envoyai import errors
 
 __all__ = [
@@ -61,6 +63,9 @@ __all__ = [
     "Budget",
     "Timeouts",
     "Privacy",
+    # Module-level shortcuts (implicit singleton Gateway)
+    "complete",
+    "acomplete",
     # Errors namespace
     "errors",
 ]
