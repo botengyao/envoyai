@@ -21,7 +21,7 @@ class GCPCredential(BaseModel):
 
 
 class ServiceAccount(GCPCredential):
-    """Service-account JSON key held in a Kubernetes Secret."""
+    """Service-account JSON key held in a named secret."""
 
     secret: SecretRef
 

@@ -1,8 +1,7 @@
 """User-facing exception hierarchy.
 
-Every error surfaced by envoyai is one of these types. Implementation details
-from Envoy (e.g. "upstream connect error", "AIServiceBackend NotAccepted") are
-translated into these before reaching user code.
+Every error surfaced by envoyai is one of these types. Low-level messages from
+the gateway are translated into these before reaching user code.
 """
 from __future__ import annotations
 

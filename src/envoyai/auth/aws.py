@@ -3,8 +3,8 @@
 Three modes, matching the gateway's supported auth methods:
 
 - :func:`irsa` — the AWS default credential chain (env vars, EKS Pod Identity,
-  IRSA, EC2 instance roles). No Secret needed.
-- :func:`credentials_file` — a Kubernetes Secret holding an INI credentials file.
+  IRSA, EC2 instance roles). No secret needed.
+- :func:`credentials_file` — a named secret holding an INI credentials file.
 - :func:`oidc` — OIDC federation: exchange an identity token for temporary AWS
   credentials via ``sts:AssumeRoleWithWebIdentity``.
 """
@@ -36,7 +36,7 @@ class IRSA(AWSCredential):
 
 
 class CredentialsFile(AWSCredential):
-    """Read ~/.aws/credentials-style INI from a Kubernetes Secret."""
+    """Read ~/.aws/credentials-style INI from a named secret."""
 
     secret: SecretRef
     profile: str = "default"

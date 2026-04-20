@@ -1,6 +1,8 @@
 # envoyai
 
-Python SDK for [Envoy AI Gateway](https://github.com/envoyproxy/ai-gateway). Define, run, and deploy a production-grade LLM gateway without touching YAML or Kubernetes.
+Python SDK for [Envoy AI Gateway](https://github.com/envoyproxy/ai-gateway). Define an LLM gateway in Python — run it locally, or ship it to Kubernetes in one call. No YAML, no CRDs to memorize.
+
+## On your laptop (no cluster required)
 
 ```python
 import envoyai as ea
@@ -15,9 +17,17 @@ gw.model("chat").route(
     retry=ea.RetryPolicy.rate_limit_tolerant(),
 )
 
-gw.local()                               # dev: gateway on :1975, admin on :1976
-gw.render_k8s().write("manifests/")      # GitOps
-gw.apply(kubeconfig="~/.kube/config")    # direct apply
+gw.local()                        # gateway on :1975, admin UI on :1976
+client = gw.client()
+client.chat.completions.create(model="chat", messages=[...])
+```
+
+## Ship to production
+
+```python
+gw.deploy(kubeconfig="~/.kube/config")       # one call: render → apply → wait for ready
+# or, for GitOps:
+gw.render_k8s().write("manifests/")
 ```
 
 Status: alpha, under active development at [github.com/botengyao/envoyai](https://github.com/botengyao/envoyai).

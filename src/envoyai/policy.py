@@ -1,8 +1,7 @@
 """Retry, budget, and timeout policies.
 
-These are user-facing intent objects. The renderer translates them into the
-appropriate Envoy Gateway policies (BackendTrafficPolicy, rate limiting, etc.)
-— users never see that layer.
+User-facing intent objects. The SDK translates them into the right gateway-side
+configuration at render or run time — users never see that layer.
 """
 from __future__ import annotations
 
@@ -22,15 +21,15 @@ RetryTrigger = Literal[
 class RetryPolicy(BaseModel):
     """How failed requests are retried and how failover walks the fallback chain.
 
-    ``attempts_per_priority=1`` makes ``fallbacks=[...]`` behave as "try primary
+    ``attempts_per_step=1`` makes ``fallbacks=[...]`` behave as "try primary
     once, then move to the next fallback" — the intuitive default. Raise it to
-    retry a given backend multiple times before moving on.
+    retry a given provider multiple times before moving on.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     attempts: int = Field(default=3, ge=1, le=20)
-    attempts_per_priority: int = Field(default=1, ge=1)
+    attempts_per_step: int = Field(default=1, ge=1)
     per_retry_timeout: str = "30s"
     backoff_base: str = "100ms"
     backoff_max: str = "10s"
@@ -74,10 +73,11 @@ class Budget(BaseModel):
 
 
 class Timeouts(BaseModel):
-    """Per-route timeouts. `request` is client-visible; `backend` caps the
-    upstream call (defaults to `request` if unset)."""
+    """Per-route timeouts. ``request`` is the end-to-end limit visible to the
+    client; ``provider`` caps each call to a provider (defaults to ``request``
+    when unset)."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     request: str = "60s"
-    backend: str | None = None
+    provider: str | None = None

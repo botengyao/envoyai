@@ -1,7 +1,7 @@
-"""Providers — backend identity + authentication.
+"""Providers — identity + authentication for each AI service.
 
 Each provider instance is reusable across many logical models. Call the
-instance to bind it to a specific upstream model name:
+instance to bind it to a specific model name:
 
     openai = envoyai.OpenAI(api_key=envoyai.env("OPENAI_KEY"))
     gw.model("chat").route(primary=openai("gpt-4o-mini"))

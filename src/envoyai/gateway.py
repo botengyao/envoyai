@@ -1,12 +1,17 @@
 """Gateway — the top-level builder users interact with.
 
-One ``Gateway`` instance represents a single logical AI gateway. It accumulates
-model definitions, routes, cost-tracking config, and budgets, then emits one of
-three outputs: a local process (``.local()``), Kubernetes manifests
-(``.render_k8s()``), or a direct apply (``.apply()``).
+One ``Gateway`` instance represents a single logical AI gateway. You define
+models, routes, retries, and budgets in Python; the SDK produces one of four
+outputs depending on what you want to do:
 
-All implementation details — CRDs, Envoy config, retry filter chains — live in
-``envoyai._internal`` and are never exposed to user code.
+- ``.local()`` — run it on your laptop (no deployment target needed)
+- ``.deploy()`` — one call: ship the Gateway to Kubernetes and wait for ready
+- ``.render_k8s()`` — emit Kubernetes manifests for review or GitOps
+- ``.apply()`` — push manifests directly to a Kubernetes cluster
+
+The local / Client / model-building path does not require any Kubernetes
+knowledge — only the ``deploy`` / ``render_k8s`` / ``apply`` / ``diff`` methods
+assume a cluster.
 """
 from __future__ import annotations
 
@@ -18,7 +23,6 @@ from envoyai.policy import Budget, RetryPolicy, Timeouts
 from envoyai.providers.base import ModelRef
 
 if TYPE_CHECKING:
-    # Forward-declared; implemented in a later commit.
     from envoyai._internal.render import RenderedManifests
     from envoyai._internal.runtime import LocalRun
 
@@ -99,7 +103,7 @@ class Gateway:
 
     Example::
 
-        gw = envoyai.Gateway("team-a", namespace="ai-gateway")
+        gw = envoyai.Gateway("team-a")
         gw.model("chat").route(primary=openai("gpt-4o"))
         gw.local()
     """
@@ -108,12 +112,10 @@ class Gateway:
         self,
         name: str = "default",
         *,
-        namespace: str = "default",
-        listener_port: int = 1975,
+        port: int = 1975,
     ) -> None:
         self.name = name
-        self.namespace = namespace
-        self.listener_port = listener_port
+        self.port = port
         self._routes: dict[str, Route] = {}
         self._cost_tracking: dict[str, Any] | None = None
         self._aliases: dict[str, str] = {}
@@ -124,7 +126,7 @@ class Gateway:
         """Register or fetch a logical model by name.
 
         Logical names are what clients send in the OpenAI-style ``model`` field.
-        They need not match any upstream model name.
+        They need not match any provider-specific model name.
         """
         if logical_name not in self._routes:
             self._routes[logical_name] = Route(self, logical_name)
@@ -151,9 +153,7 @@ class Gateway:
 
     def budget(self, budget: Budget | None = None, /, **kwargs: Any) -> "Gateway":
         """Attach a gateway-wide budget (e.g. per-team spend cap)."""
-        # Implementation note: gateway-wide budgets live alongside the route list
-        # and render to rate-limiting policy. For now, stub.
-        raise NotImplementedError("budget rendering lands in the next commit")
+        raise NotImplementedError("Budget enforcement is coming in the next release.")
 
     # --- factories ----------------------------------------------------------
 
@@ -165,7 +165,7 @@ class Gateway:
         ``AZURE_OPENAI_API_KEY``, and registers a default logical model for
         each. Raises :class:`ConfigError` if none are set.
         """
-        raise NotImplementedError("quickstart lands in the next commit")
+        raise NotImplementedError("Gateway.quickstart() is coming in the next release.")
 
     # --- outputs ------------------------------------------------------------
 
@@ -177,45 +177,71 @@ class Gateway:
         debug: bool = False,
         docker: bool = False,
     ) -> "LocalRun":
-        """Run the gateway locally by wrapping ``aigw run``.
+        """Run the gateway locally as a background process.
 
-        Blocks until the subprocess is ready (listener bound, admin reachable),
-        then returns a handle exposing ``.stop()``, ``.listener_port``,
-        ``.admin_port``, and ``.client()``.
+        Blocks until the gateway is serving traffic, then returns a handle
+        exposing ``.stop()``, ``.port``, ``.admin_port``, and ``.client()``.
         """
-        raise NotImplementedError("local() lands after render.py is wired up")
+        raise NotImplementedError("Gateway.local() is coming in the next release.")
 
     def render_k8s(
         self,
         *,
+        namespace: str = "default",
         kinds: list[str] | None = None,
     ) -> "RenderedManifests":
-        """Emit the Kubernetes manifests needed to run this Gateway in-cluster.
+        """Emit the Kubernetes manifests needed to run this Gateway in a cluster.
 
-        Returns a :class:`RenderedManifests` object with ``.to_yaml()``,
-        ``.write(path)``, and per-kind accessors. Users never need to name the
-        resource kinds themselves.
+        Returns a :class:`RenderedManifests` object with ``.to_yaml()`` and
+        ``.write(path)``. You don't need to name the resource kinds yourself —
+        the SDK picks them based on what your Gateway actually uses.
         """
-        raise NotImplementedError("render_k8s() lands with the CRD codegen commit")
+        raise NotImplementedError("Gateway.render_k8s() is coming in the next release.")
 
     def apply(
         self,
         *,
+        namespace: str = "default",
         kubeconfig: str | None = None,
         context: str | None = None,
         prune: bool = False,
     ) -> None:
-        """Apply the rendered manifests directly to a cluster."""
-        raise NotImplementedError("apply() lands after render_k8s is live")
+        """Apply the rendered manifests directly to a Kubernetes cluster.
 
-    def diff(
+        Low-level counterpart to :meth:`deploy`. Prefer ``deploy()`` unless you
+        want to manage the render / apply / readiness steps separately.
+        """
+        raise NotImplementedError("Gateway.apply() is coming in the next release.")
+
+    def deploy(
         self,
         *,
         kubeconfig: str | None = None,
         context: str | None = None,
+        namespace: str = "default",
+        wait: bool = True,
+        timeout: str = "5m",
     ) -> "RenderedManifests":
-        """Show drift between this in-Python config and what's on-cluster."""
-        raise NotImplementedError("diff() lands after render_k8s is live")
+        """Ship this Gateway to Kubernetes in one call.
+
+        Combines :meth:`render_k8s` + :meth:`apply` + readiness polling into a
+        single opinionated flow — get from Python to a running gateway without
+        writing YAML, running ``kubectl``, or chasing reconciliation status.
+        Returns the same manifests :meth:`render_k8s` would have produced so
+        callers can still inspect what got applied.
+        """
+        raise NotImplementedError("Gateway.deploy() is coming in the next release.")
+
+    def diff(
+        self,
+        *,
+        namespace: str = "default",
+        kubeconfig: str | None = None,
+        context: str | None = None,
+    ) -> "RenderedManifests":
+        """Show drift between this Gateway (as declared in Python) and what's
+        currently deployed in a cluster."""
+        raise NotImplementedError("Gateway.diff() is coming in the next release.")
 
     # --- internal -----------------------------------------------------------
 

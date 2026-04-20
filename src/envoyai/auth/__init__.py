@@ -1,11 +1,11 @@
 """Authentication helpers.
 
 Top-level helpers (common):
-    envoyai.env("VAR")                     — reference an env var
-    envoyai.secret("name", key="apiKey")   — reference a k8s Secret
+    envoyai.env("VAR")                     — reference an environment variable
+    envoyai.secret("name", key="apiKey")   — reference a named secret
     envoyai.header("x-team")               — reference a request header (for identity/cost)
 
-Per-cloud namespaces:
+Per-cloud helper groups:
     envoyai.aws.irsa()                     — default AWS credential chain
     envoyai.aws.credentials_file(...)
     envoyai.aws.oidc(...)
@@ -33,7 +33,12 @@ class EnvVar(APIKeyRef):
 
 
 class SecretRef(APIKeyRef):
-    """Reference an existing Kubernetes Secret."""
+    """Reference a secret by name.
+
+    When ``render_k8s()`` emits manifests this resolves to a Kubernetes Secret;
+    for local development the SDK resolves it from the environment. Users do
+    not have to think about where the secret actually lives.
+    """
 
     name: str
     namespace: str | None = None
@@ -41,10 +46,8 @@ class SecretRef(APIKeyRef):
 
 
 class InlineKey(APIKeyRef):
-    """Inline literal key value. Written into a generated Secret at render time.
-
-    Avoid committing code that uses this; prefer ``env(...)`` or ``secret(...)``.
-    """
+    """Inline literal key value. Avoid committing code that uses this; prefer
+    ``env(...)`` or ``secret(...)``."""
 
     value: str
 
@@ -57,13 +60,12 @@ class Header(BaseModel):
 
 
 def env(var: str) -> EnvVar:
-    """Reference an env var. At ``local()`` time it's substituted by ``aigw``; at
-    ``render_k8s()`` time it's read and written into a generated Secret."""
+    """Reference an environment variable. Resolved at run or render time."""
     return EnvVar(var=var)
 
 
 def secret(name: str, *, namespace: str | None = None, key: str = "apiKey") -> SecretRef:
-    """Reference an existing Kubernetes Secret."""
+    """Reference a secret by name."""
     return SecretRef(name=name, namespace=namespace, key=key)
 
 
