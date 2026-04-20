@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence, Union
 
+from envoyai._internal.runtime import LocalRun
 from envoyai.auth import Header
 from envoyai.errors import ConfigError, ModelNotFound
 from envoyai.policy import Budget, Privacy, RetryPolicy, Timeouts
@@ -26,7 +27,6 @@ if TYPE_CHECKING:
     from openai.types.chat import ChatCompletion
 
     from envoyai._internal.render import RenderedManifests
-    from envoyai._internal.runtime import LocalRun
 
 
 ChatMessage = Mapping[str, Any]
@@ -130,6 +130,7 @@ class Gateway:
         self._cost_tracking: dict[str, Any] | None = None
         self._aliases: dict[str, str] = {}
         self._privacy: Privacy = Privacy()
+        self._running: LocalRun | None = None
 
     # --- model / route building ---------------------------------------------
 
@@ -236,7 +237,21 @@ class Gateway:
         envoyai.errors.BudgetExceeded
             A budget with ``enforce_at`` was crossed.
         """
-        raise NotImplementedError("Gateway.complete() is coming in the next release.")
+        from envoyai._internal.dispatch import dispatch_sync
+
+        run = self._require_running("complete")
+        logical = self._resolve_logical_model(
+            model, provider_options=provider_options, timeout=timeout
+        )
+        return dispatch_sync(
+            run,
+            logical,
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            tools=tools,
+            tool_choice=tool_choice,
+        )
 
     async def acomplete(
         self,
@@ -259,7 +274,21 @@ class Gateway:
 
         See :meth:`complete` for argument, error, and streaming semantics.
         """
-        raise NotImplementedError("Gateway.acomplete() is coming in the next release.")
+        from envoyai._internal.dispatch import dispatch_async
+
+        run = self._require_running("acomplete")
+        logical = self._resolve_logical_model(
+            model, provider_options=provider_options, timeout=timeout
+        )
+        return await dispatch_async(
+            run,
+            logical,
+            messages,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            tools=tools,
+            tool_choice=tool_choice,
+        )
 
     # --- outputs ------------------------------------------------------------
 
@@ -364,6 +393,45 @@ class Gateway:
         raise NotImplementedError("Gateway.diff() is coming in the next release.")
 
     # --- internal -----------------------------------------------------------
+
+    def _require_running(self, call_name: str) -> LocalRun:
+        """Return the active :class:`LocalRun` or raise a clear ConfigError."""
+        if self._running is None:
+            raise ConfigError(
+                f"gateway is not running; call .local() (SDK mode) or "
+                f".serve() (proxy mode) before .{call_name}(). For the "
+                "implicit-singleton path, envoyai.complete() manages this "
+                "for you."
+            )
+        return self._running
+
+    def _resolve_logical_model(
+        self,
+        model: str,
+        *,
+        provider_options: Mapping[str, Any] | None,
+        timeout: str | None,
+    ) -> str:
+        """Resolve aliases and verify the model is registered.
+
+        Returns the logical name to send to the gateway. The gateway itself
+        picks the provider, performs any fallback walk, and applies the
+        Route's retry / budget / timeout policies — we never replicate that
+        logic in Python.
+        """
+        logical = self._aliases.get(model, model)
+        if logical not in self._routes:
+            raise ModelNotFound(logical, known=list(self._routes))
+        if provider_options:
+            raise NotImplementedError(
+                "provider_options pass-through is not wired into the minimal "
+                "SDK call path yet"
+            )
+        if timeout is not None:
+            raise NotImplementedError(
+                "per-call timeout is not wired into the minimal SDK call path yet"
+            )
+        return logical
 
     def _validate(self) -> None:
         """Structurally validate the Gateway, collecting every problem at once.

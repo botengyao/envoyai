@@ -32,11 +32,21 @@ _atexit_registered = False
 
 
 def get_or_create() -> Gateway:
-    """Return the process-wide singleton Gateway, creating it on first call."""
+    """Return the process-wide singleton Gateway, creating it on first call.
+
+    The singleton is marked as running against ``127.0.0.1:1975`` so the
+    module-level ``envoyai.complete()`` / ``acomplete()`` path can dispatch
+    immediately. Users are responsible for ensuring an ``aigw`` process is
+    actually listening there (either started externally, or — once the
+    runtime wrapper lands — automatically via this singleton).
+    """
+    from envoyai._internal.runtime import LocalRun
+
     global _singleton, _atexit_registered
     with _create_lock:
         if _singleton is None:
             _singleton = Gateway(name="envoyai-default")
+            _singleton._running = LocalRun(port=1975, admin_port=1064)
             if not _atexit_registered:
                 atexit.register(reset)
                 _atexit_registered = True
