@@ -1,0 +1,20 @@
+{
+  "$schema": "envoyai-price-sheet/v1",
+  "provider": "openai",
+  "effective_from": "2026-01-01",
+  "currency": "USD",
+  "models": {
+    "gpt-4o": {
+      "input_per_1m_tokens": 2.50,
+      "output_per_1m_tokens": 10.00
+    },
+    "gpt-4o-mini": {
+      "input_per_1m_tokens": 0.15,
+      "output_per_1m_tokens": 0.60
+    },
+    "text-embedding-3-small": {
+      "input_per_1m_tokens": 0.02,
+      "output_per_1m_tokens": 0.00
+    }
+  }
+}
