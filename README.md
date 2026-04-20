@@ -1,6 +1,18 @@
 # envoyai
 
-**A production-grade LLM gateway, configured in Python.** Two lines for the quickstart, typed Python for anything beyond — run it on your laptop with one line, or ship it to Kubernetes with one line. Built on [Envoy AI Gateway](https://github.com/envoyproxy/ai-gateway). No YAML, no cluster knowledge, no client-side provider juggling.
+**A production-grade LLM gateway, configured in Python.** Two lines for the quickstart, typed Python for anything beyond. Built on [Envoy AI Gateway](https://github.com/envoyproxy/ai-gateway): routing, retries, provider translation, and auth injection all happen in a real Envoy proxy — not inside your Python process. No YAML, no cluster knowledge, no client-side provider juggling.
+
+## Quick start
+
+Install the library and the `aigw` binary (envoyai spawns `aigw` as a subprocess to host Envoy locally):
+
+```bash
+pip install envoyai[client]
+go install github.com/envoyproxy/ai-gateway/cmd/aigw@latest   # or grab a release
+export OPENAI_API_KEY=sk-...
+```
+
+Two lines:
 
 ```python
 import envoyai as ea
@@ -8,70 +20,75 @@ resp = ea.complete(model="gpt-4o-mini",
                    messages=[{"role": "user", "content": "hi"}])
 ```
 
-Two lines. An implicit, process-wide gateway starts on first call; `$OPENAI_API_KEY` is read from the environment; `gpt-*` / `claude-*` / `anthropic.*` / `command-*` model names auto-register to the right provider. When you want explicit control, drop down to the full builder:
+An implicit, process-wide gateway is marked active against `127.0.0.1:1975`; `gpt-*` / `claude-*` / `anthropic.*` / `command-*` model names auto-register to the right provider. For anything beyond the happy path, drop to the full builder:
 
 ```python
 import envoyai as ea
 
-openai    = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
-anthropic = ea.Anthropic(api_key=ea.env("ANTHROPIC_API_KEY"))
-
 gw = ea.Gateway()
 gw.model("chat").route(
-    primary=openai("gpt-4o"),
-    fallbacks=[anthropic("claude-sonnet-4")],
-    retry=ea.RetryPolicy.rate_limit_tolerant(),
+    primary=ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))("gpt-4o-mini")
 )
-gw.local()                                  # http://localhost:1975
+gw.local()                              # renders YAML, spawns `aigw run`,
+                                        # waits for readiness on :1975
+
+resp = gw.complete("chat", "hi")
+print(resp.choices[0].message.content)
 ```
 
-Point any OpenAI-compatible client at it:
+Any OpenAI-compatible client (any language) can hit the gateway too:
 
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://localhost:1975", api_key="unused")
-client.chat.completions.create(
-    model="chat",
-    messages=[{"role": "user", "content": "hi"}],
-)
+client = OpenAI(base_url="http://127.0.0.1:1975", api_key="unused")
+client.chat.completions.create(model="chat",
+                               messages=[{"role": "user", "content": "hi"}])
 ```
 
-Your application keeps using the OpenAI SDK it already has. Failover, retries, streaming, tool use, cost tracking, budgets, and privacy come from envoyai without changing call sites.
+Your application keeps using the OpenAI SDK it already has. The real provider key stays server-side in the gateway's auth policy and is injected upstream — it never touches the Python client.
 
-## Two modes
+## Three entry points
 
-One `Gateway` object, two ways to run it — the configuration is identical.
+| Style | File | When to use |
+|---|---|---|
+| **Two-liner** — [`examples/00_two_liner.py`](examples/00_two_liner.py) | `ea.complete(model=..., messages=...)` with an implicit singleton gateway | Quick scripts, trying things out |
+| **SDK mode** — [`examples/a_sdk_mode.py`](examples/a_sdk_mode.py) | `gw = ea.Gateway()` + `gw.local()` + `gw.complete()` | Explicit gateway in the same process |
+| **Proxy mode** — [`examples/b_proxy_mode/`](examples/b_proxy_mode/) | `gw.serve()` blocking + any OpenAI client (any language) | Multi-language stacks, shared dev servers |
 
-- **SDK mode** — `gw.local()` runs the gateway as a background subprocess; `gw.complete()` makes calls from the same Python process. No separate terminal, no `openai` import needed. Best for single-process scripts, notebooks, CI jobs. See [`examples/a_sdk_mode.py`](examples/a_sdk_mode.py).
-- **Proxy mode** — `gw.serve()` blocks and runs the gateway as a persistent service; any OpenAI-compatible client in any language can hit the endpoint. Best for multi-language stacks, shared dev servers, production deployments. See [`examples/b_proxy_mode/`](examples/b_proxy_mode/).
+Same `Gateway` config drives all three.
 
 ## Why envoyai
 
-If you're coming from an in-process LLM router like LiteLLM, the shift is: **the gateway is a real proxy, not code running inside your application.** That changes what you get:
-
-- **Typed Python config, not growing YAML.** Providers, routes, fallbacks, retries, and budgets are Pydantic-validated objects with IDE autocomplete. Build-time validation catches misconfiguration before any request runs; `Gateway._validate()` reports every problem in a single error, not one-at-a-time at request time.
-- **Every language, one config.** Routing, retries, circuit breaking, and cost attribution run in Envoy — so Python, Node, Go, Ruby, and curl clients all get identical behavior without a per-language SDK.
-- **No module-level mutable state.** All configuration lives on a `Gateway` instance. Multiple gateways coexist in one process. A regression test in this repo fails the build if anyone adds global config knobs.
-- **Cost from metrics, not hardcoded tables.** Spend is computed at query time from gateway-emitted token counts against [versioned price sheets](src/envoyai/_internal/prices/). Historical queries use the sheet in effect at the time of the request.
-- **Safe-by-default privacy.** Auth headers redacted; prompt and response bodies stay out of logs and observability callbacks unless you explicitly opt in via `gw.privacy(...)`.
+- **The proxy is Envoy, not Python.** Routing, retries, circuit breaking, and cost attribution run in an `aigw` subprocess that this library manages for you. Python clients point at `http://127.0.0.1:<port>` with a placeholder `api_key="unused"`; the real upstream key lives server-side.
+- **Every language, one config.** Because the gateway is a real proxy, Python, Node, Go, Ruby, and curl clients all see identical behavior without a per-language SDK.
+- **Typed Python config, not growing YAML.** Providers, routes, fallbacks, retries, and budgets are Pydantic-validated objects with IDE autocomplete. `Gateway._validate()` reports every problem in a single error before any subprocess starts.
+- **No module-level mutable state.** All configuration lives on a `Gateway` instance; a regression test fails the build if anyone adds global config knobs at `envoyai.*`.
+- **Cost from metrics, not hardcoded tables.** Spend will be computed from gateway-emitted token counts against [versioned price sheets](src/envoyai/_internal/prices/). Historical queries use the sheet in effect at the time of the request.
+- **Safe-by-default privacy.** Auth headers redacted; prompt and response bodies stay out of logs and callbacks unless you opt in via `gw.privacy(...)`.
 - **Structured, typed errors** with always-populated fields (`retry_after_s`, `provider`, `model`, `trace_id`) and a `.cause` attribute for underlying exceptions.
-- **One object, three outputs.** The same `Gateway` can `local()` on your laptop, `render_k8s()` for GitOps, or `deploy()` to a cluster with readiness polling. No separate YAML schema for "proxy mode."
 
 ## Install
 
 ```bash
-pip install envoyai
+pip install envoyai              # library
+pip install envoyai[client]      # + openai SDK for the calling side
+pip install envoyai[admin]       # + admin UI backend (coming)
+pip install envoyai[dev]         # + pytest, mypy, ruff for contributors
 ```
 
-Optional extras:
+Also install the `aigw` binary — envoyai spawns it to host Envoy locally:
 
-- `envoyai[client]` — the OpenAI SDK for the calling side
-- `envoyai[admin]` — the admin UI backend
-- `envoyai[dev]`    — pytest, mypy, ruff for contributors
+```bash
+go install github.com/envoyproxy/ai-gateway/cmd/aigw@latest
+```
+
+`gw.local()` and `gw.serve()` raise `envoyai.errors.LocalRunError` with a clear message if `aigw` isn't on `PATH`.
 
 ## Providers
 
-OpenAI, Azure OpenAI, AWS Bedrock, Anthropic (native and via Bedrock), Google Vertex AI (Gemini and Anthropic), Cohere, and any OpenAI-compatible endpoint — vLLM, Ollama, text-generation-inference, self-hosted proxies.
+Typed classes for every backend: `OpenAI`, `AzureOpenAI`, `Bedrock`, `AWSAnthropic`, `Anthropic`, `Cohere`, `GCPVertex`, `GCPAnthropic`, and any OpenAI-compatible endpoint (vLLM, Ollama, text-generation-inference, self-hosted proxies) by passing `base_url` to `OpenAI`.
+
+**Today's runtime scope:** `gw.local()` / `gw.serve()` currently render configs for a single OpenAI provider per route with `ea.env(...)` auth. Fallbacks, weighted splits, retries, budgets, and providers other than OpenAI are accepted by the builder but raise a clear `NotImplementedError` from the renderer. Those land next — see the [changelog](CHANGELOG.md).
 
 ## Examples
 
@@ -79,6 +96,7 @@ OpenAI, Azure OpenAI, AWS Bedrock, Anthropic (native and via Bedrock), Google Ve
 
 | # | File | What it shows |
 |---|---|---|
+| 00 | [two_liner](examples/00_two_liner.py) | `ea.complete()` with auto-registration |
 | 01 | [hello_world](examples/01_hello_world.py) | Single provider, one logical model |
 | 02 | [multi_provider](examples/02_multi_provider.py) | All eight providers in one gateway |
 | 03 | [failover](examples/03_failover.py) | Primary + fallback chain with retries |
@@ -95,8 +113,17 @@ OpenAI, Azure OpenAI, AWS Bedrock, Anthropic (native and via Bedrock), Google Ve
 | 14 | [privacy](examples/14_privacy.py) | Redaction defaults and overrides |
 | 15 | [handling_errors](examples/15_handling_errors.py) | Build-time and request-time errors |
 
+Examples 02–15 document the target API. The builder accepts all of their configs today; the subset listed in **Today's runtime scope** above is what renders and runs through `aigw`. The rest will light up release by release — see the [changelog](CHANGELOG.md).
+
 ## Status
 
-Alpha. The builder API is stable; the runtime that powers `gw.local()`, `gw.deploy()`, and `gw.render_k8s()` lands next — see [`CHANGELOG.md`](CHANGELOG.md).
+Alpha. Shipped today:
+
+- Builder API — `Gateway`, providers, auth helpers, `RetryPolicy` / `Budget` / `Privacy` / `Timeouts`, typed errors.
+- `Gateway.local()` — renders → spawns `aigw` → probes readiness → returns a `LocalRun` handle.
+- `Gateway.serve()` — blocking foreground entrypoint for running as a persistent proxy.
+- `Gateway.complete()` / `acomplete()` and `envoyai.complete()` / `acomplete()` — dispatch through the local gateway.
+
+Coming in upcoming releases: multi-provider rendering, fallback / Split / retry / budget rendering, `render_k8s()` / `apply()` / `deploy()` / `diff()` for Kubernetes, cost ledger against versioned price sheets, admin UI. Track progress in [`CHANGELOG.md`](CHANGELOG.md).
 
 Developed at [github.com/botengyao/envoyai](https://github.com/botengyao/envoyai).
