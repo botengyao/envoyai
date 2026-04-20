@@ -14,11 +14,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`RetryPolicy`, `Budget`, `Timeouts`, `Privacy`), typed error hierarchy.
 - Target outputs on `Gateway`: `.local()`, `.deploy()`, `.render_k8s()`,
   `.apply()`, `.diff()` — currently stubs raising `NotImplementedError`.
-- `examples/` directory with 15 small, self-contained scripts covering
-  common tasks: hello world, multi-provider setup, failover, canary splits,
-  streaming, tool use, embeddings, vision, async, custom retry, per-team
-  budgets, aliases, self-hosted upstreams, privacy, error handling.
-- README reorganized around the laptop path and the `examples/` index.
+- `examples/` directory with hero examples for both modes plus 15 feature
+  demos: SDK mode (`a_sdk_mode.py`), proxy mode (`b_proxy_mode/`), and
+  numbered feature examples covering multi-provider setup, failover, canary
+  splits, streaming, tool use, embeddings, vision, async, custom retry,
+  per-team budgets, aliases, self-hosted upstreams, privacy, error handling.
+- `Gateway.complete(model, messages, ...)` and `Gateway.acomplete(...)` —
+  call the gateway in SDK mode without importing the OpenAI SDK. Sync vs
+  async is by method name; return type is fixed regardless of kwargs.
+- `Gateway.serve(...)` — blocking foreground entrypoint for running the
+  gateway as a persistent proxy service. Counterpart to `local()`.
+- README reorganized: hero quick start, two-modes section, `Why envoyai`
+  differentiators, and a flat index of `examples/`.
 - Smoke tests covering the public surface and the README example.
 
 ### Changed

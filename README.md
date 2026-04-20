@@ -30,6 +30,13 @@ client.chat.completions.create(
 
 Your application keeps using the OpenAI SDK it already has. Failover, retries, streaming, tool use, cost tracking, budgets, and privacy come from envoyai without changing call sites.
 
+## Two modes
+
+One `Gateway` object, two ways to run it — the configuration is identical.
+
+- **SDK mode** — `gw.local()` runs the gateway as a background subprocess; `gw.complete()` makes calls from the same Python process. No separate terminal, no `openai` import needed. Best for single-process scripts, notebooks, CI jobs. See [`examples/a_sdk_mode.py`](examples/a_sdk_mode.py).
+- **Proxy mode** — `gw.serve()` blocks and runs the gateway as a persistent service; any OpenAI-compatible client in any language can hit the endpoint. Best for multi-language stacks, shared dev servers, production deployments. See [`examples/b_proxy_mode/`](examples/b_proxy_mode/).
+
 ## Why envoyai
 
 If you're coming from an in-process LLM router like LiteLLM, the shift is: **the gateway is a real proxy, not code running inside your application.** That changes what you get:
