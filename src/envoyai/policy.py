@@ -9,13 +9,18 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-RetryTrigger = Literal[
-    "connect-failure",
-    "retriable-status-codes",
-    "reset",
-    "retriable-4xx",
-    "gateway-error",
+RetryReason = Literal[
+    "rate_limit",         # HTTP 429 or equivalent per-provider throttling
+    "timeout",             # request exceeded per_retry_timeout
+    "server_error",        # 5xx responses
+    "connection_error",    # connect / reset / DNS failures
 ]
+"""High-level reasons a request might be retried.
+
+These are product concepts, not wire-level triggers. The SDK maps each reason
+onto the appropriate mix of HTTP status codes and transport-level triggers at
+render time.
+"""
 
 
 class RetryPolicy(BaseModel):
@@ -24,6 +29,11 @@ class RetryPolicy(BaseModel):
     ``attempts_per_step=1`` makes ``fallbacks=[...]`` behave as "try primary
     once, then move to the next fallback" — the intuitive default. Raise it to
     retry a given provider multiple times before moving on.
+
+    ``on`` is a list of product-level reasons to retry on. Pick from
+    ``rate_limit``, ``timeout``, ``server_error``, ``connection_error``.
+    Presets (:meth:`rate_limit_tolerant`, :meth:`fail_fast`, :meth:`none`)
+    configure this for you.
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -33,25 +43,24 @@ class RetryPolicy(BaseModel):
     per_retry_timeout: str = "30s"
     backoff_base: str = "100ms"
     backoff_max: str = "10s"
-    on_status: list[int] = Field(default_factory=lambda: [429, 500, 502, 503, 504])
-    on_triggers: list[RetryTrigger] = Field(
-        default_factory=lambda: ["connect-failure", "retriable-status-codes"]
+    on: list[RetryReason] = Field(
+        default_factory=lambda: ["rate_limit", "timeout", "server_error", "connection_error"]
     )
 
     @classmethod
     def rate_limit_tolerant(cls) -> RetryPolicy:
         """Preset for rate-limited providers: more attempts, longer timeout."""
-        return cls(attempts=5, on_status=[429, 503], per_retry_timeout="60s")
+        return cls(attempts=5, on=["rate_limit", "server_error"], per_retry_timeout="60s")
 
     @classmethod
     def fail_fast(cls) -> RetryPolicy:
         """Preset for latency-sensitive paths: no retries, single attempt."""
-        return cls(attempts=1)
+        return cls(attempts=1, on=[])
 
     @classmethod
     def none(cls) -> RetryPolicy:
-        """Preset that disables retries and failover triggers entirely."""
-        return cls(attempts=1, on_status=[], on_triggers=[])
+        """Preset that disables retries entirely."""
+        return cls(attempts=1, on=[])
 
 
 class Budget(BaseModel):
