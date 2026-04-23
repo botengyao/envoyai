@@ -58,6 +58,10 @@ listener and sees identical behavior regardless of which upstream
 actually served the request. API keys enter the gateway process via env
 vars at startup and never leave it.
 
+For a deeper dive with ASCII diagrams of the build pipeline, the
+request path, and every CRD that gets rendered, see
+[ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Full example
 
 ```python
