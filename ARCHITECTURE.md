@@ -307,6 +307,76 @@ for vLLM / Ollama / self-hosted, Azure OpenAI in compat mode). Right
 shape for homogeneous-fleet / edge deployments; wrong shape if you need
 Anthropic / Bedrock / Vertex / Cohere in the same gateway.
 
+#### Extending (C) — pure Envoy at full scope
+
+(C) is scoped to OpenAI-compatible upstreams *because* it drops aigw's
+ExtProc filter. Lift that constraint — assume every aigw-owned piece
+is provided some other way — and you get a fully aigw-free
+architecture on top of pure Envoy. What "provided some other way"
+actually means, piece by piece:
+
+| What aigw owns today | Replacement without aigw |
+|---|---|
+| Format translation (OpenAI ↔ Anthropic ↔ Bedrock wire formats) | (a) an Envoy **WASM filter** doing the rewrite in-proc; (b) an **ExtProc sidecar** microservice; (c) restrict scope to OpenAI-compat upstreams — the filter becomes identity. |
+| Model-aware routing (today: `x-ai-eg-model` extracted from the JSON body) | Client sends the model as an HTTP header and Envoy does a **native header match**. Or a small WASM / Lua filter peeks at the body. |
+| Per-provider auth injection (`BackendSecurityPolicy`) | `request_headers_to_add` on the route (native). Rotating keys use **Envoy SDS** — envoyai pushes secrets as xDS `Secret` resources. |
+| Retry + priority failover | **Native** `retry_policy` on the route + cluster priorities. Or Envoy Gateway's `BackendTrafficPolicy` if present. |
+| Per-request token / cost logging | Structured access logs, optionally enriched by the same WASM filter that does translation. |
+
+With all of that assumed, the architecture collapses to one control
+plane and one data plane, with a filter chain that envoyai programs
+via xDS:
+
+```
+      ┌──────────────┐           xDS (ADS v3, Secret xDS)
+      │ envoyai      │ ───────────────────────────────────┐
+      │ typed Gateway│                                    │
+      │ + xDS server │                                    ▼
+      └──────────────┘                          ┌──────────────────┐
+                                                │ pure Envoy       │
+                                                │  listener :1975  │
+                                                │  filter chain:   │
+                                                │   • model header │ native match
+                                                │   • auth inject  │ native
+                                                │   • translate    │ ← WASM / ExtProc
+                                                │   • router       │
+                                                │  clusters:       │
+                                                │   - openai       │
+                                                │   - anthropic    │
+                                                └────────┬─────────┘
+                                                         │ TLS per cluster
+                                                         ▼
+                                                      upstreams
+```
+
+When this becomes the right architecture:
+
+- **Edge / on-device inference fleets** — one envoyai control plane
+  pushing xDS to many Envoys on edge hardware, where pulling a second
+  binary (aigw) is inconvenient and updates need to be near real-time.
+- **Pure OpenAI-compat deployments** — vLLM / Ollama / Azure OpenAI in
+  compat mode / self-hosted proxies all speak the same wire format, so
+  the translation slot collapses to identity.
+- **Orgs with WASM engineering** — a translation WASM module replaces
+  a subprocess dependency with a versioned, hot-swappable in-Envoy
+  filter that can be pushed via xDS itself.
+
+When aigw remains the right choice:
+
+- **Heterogeneous upstreams today, no WASM bandwidth** — aigw's
+  ExtProc filter is already battle-tested for OpenAI ↔ Anthropic ↔
+  Bedrock translation. Rebuilding it in WASM or a sidecar is a
+  quarters-of-engineering commitment, not a week.
+- **You want aigw's ops surface out of the box** — token counters,
+  admin port, stat prefixes, ready-made observability. Reimplementing
+  these in pure Envoy plus custom filters is more work than it looks.
+
+Honest read: the scoped (C) can land first with a real use case
+(OpenAI-compat fleets). The full-scope extension is the right
+long-term architecture *if* envoyai invests in a translation WASM
+module or adopts ExtProc-as-a-microservice. Until then, aigw is
+load-bearing — it's doing the work we'd otherwise have to do ourselves.
+
 ### Comparison at a glance
 
 |  | source of truth | how the runtime learns | propagation latency | multi-replica | upstream set |
