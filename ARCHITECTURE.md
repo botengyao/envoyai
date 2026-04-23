@@ -368,6 +368,65 @@ cluster controller; envoyai's `render_k8s()` / `apply()` / `deploy()`
 GitOps; standard Kubernetes operational shape for teams that already
 live there.
 
+**Topology 4 — third-party xDS control plane (e.g., Traffic Director,
+istiod).** Organizations that already run a service mesh — Google
+Cloud [Traffic Director](https://cloud.google.com/traffic-director),
+Istio (istiod), HashiCorp Consul Connect, Kuma — have a production
+xDS control plane already configuring Envoys across the fleet.
+envoyai integrates *with* that control plane rather than replacing it.
+Two integration patterns, complementary:
+
+**(4a) envoyai as a mesh-native backend.** The existing control plane
+doesn't touch the aigw Envoy directly; instead it treats envoyai as a
+service in the mesh. Mesh-sidecar Envoys on the client side get the
+usual routing / mTLS / authz from the mesh control plane; envoyai
+sits at the edge of that flow and owns AI-specific concerns.
+
+```
+   mesh control plane             mesh sidecar              envoyai gateway
+   (Traffic Director / istiod)    (client-side Envoy)
+   ┌───────────────┐              ┌───────────┐             ┌──────────────┐
+   │ mesh xDS      │── ──▶ ───────│ app Envoy │── mTLS ───▶ │ aigw listener│ ─▶ OpenAI /
+   │  routes       │              └───────────┘             │ :1975        │    Anthropic
+   │  clusters     │                                        └──────────────┘    /…
+   │  mTLS, RBAC   │
+   └───────────────┘                                        service registered
+                                                            in the mesh
+```
+
+Cleanest brownfield story — the mesh keeps owning north-south / east-west
+transport (mTLS, authz, org telemetry, SRE runbooks), envoyai keeps
+owning format translation, per-model routing, and upstream auth injection.
+
+**(4b) Dual-source xDS into the aigw Envoy.** The Envoy inside aigw
+subscribes to **two** xDS sources at once: the mesh control plane (for
+listeners, clusters, endpoints, mTLS, rate limits, access logs) and
+aigw's own in-process xDS (for the AI-specific ExtProc filter state
+and the `BackendSecurityPolicy`-driven auth-header injection). Envoy
+supports multiple xDS sources; what it doesn't support is two sources
+asserting ownership over the *same* resource, so the split has to be
+clean — the mesh owns transport, aigw owns AI filters.
+
+```
+   Traffic Director / istiod                 aigw in-process xDS
+   (routes, clusters, mTLS, RBAC)            (ExtProc filter, BSP auth)
+        │                                         │
+        └──────────────────┬──────────────────────┘
+                           ▼
+                    ┌──────────────────┐
+                    │ aigw Envoy       │ ← on-device runtime, two xDS feeds
+                    └──────────────────┘
+                           │ upstream
+                           ▼
+                    OpenAI / Anthropic / local vLLM / …
+```
+
+More operationally demanding; worth it when the organization wants
+the LLM gateway to inherit *every* mesh concern — zero-trust identity,
+org-wide telemetry, quota enforcement — without envoyai reimplementing
+any of it. aigw still adds the AI-layer value; Traffic Director keeps
+its job.
+
 ### The honest endgame
 
 A hybrid: **envoyai as a gRPC control plane, aigw as the runtime**,
