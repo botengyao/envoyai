@@ -37,7 +37,7 @@ against `localhost:1975` to show the call shape.
 ## Running
 
 ```bash
-pip install envoyai[client]
+pip install envoyai
 export OPENAI_API_KEY=sk-...              # or whichever vars each example uses
 python examples/00_two_liner.py
 ```

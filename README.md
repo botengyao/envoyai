@@ -5,7 +5,7 @@
 ## Quick start
 
 ```bash
-pip install envoyai[client]
+pip install envoyai
 export OPENAI_API_KEY=sk-...
 ```
 
@@ -67,8 +67,7 @@ Same `Gateway` config drives all three.
 ## Install
 
 ```bash
-pip install envoyai              # library
-pip install envoyai[client]      # + openai SDK for the calling side
+pip install envoyai              # library (includes the OpenAI SDK for same-process calls)
 pip install envoyai[admin]       # + admin UI backend (coming)
 pip install envoyai[dev]         # + pytest, mypy, ruff for contributors
 ```

@@ -103,6 +103,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Gateway.listener_port` → `Gateway.port`.
 - `RetryPolicy.attempts_per_priority` → `attempts_per_step`.
 - `Timeouts.backend` → `Timeouts.provider`.
+- `openai>=1.40` is now a core dependency; the `envoyai[client]` extra
+  is gone. `pip install envoyai` is all that's needed for
+  `Gateway.complete()` / `envoyai.complete()` and every documented
+  example. Proxy-mode consumers that live in a separate process still
+  install `openai` on the app side as they did before.
 
 ### Removed
 - Envoy- and CRD-flavored vocabulary from user-visible docstrings and error

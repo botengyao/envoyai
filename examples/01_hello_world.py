@@ -2,8 +2,8 @@
 
 Single OpenAI model, laptop-only. Shortest possible envoyai setup.
 
-Requires OPENAI_API_KEY in the environment and — for the call below —
-``envoyai[client]`` to pull in the OpenAI SDK.
+Requires OPENAI_API_KEY in the environment. ``pip install envoyai``
+already includes the OpenAI SDK used below.
 
 Runtime note: ``gw.local()`` is a stub until the envoyai runtime lands.
 """
