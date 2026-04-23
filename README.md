@@ -94,9 +94,10 @@ Typed classes for every backend: `OpenAI`, `AzureOpenAI`, `Bedrock`, `AWSAnthrop
 
 - **Providers**: `OpenAI`, `Anthropic` (native API). Multiple providers coexist in one `Gateway`; each logical model can point at either.
 - **Auth**: `ea.env(...)` (rendered as `${VAR}` for `aigw`'s envsubst).
-- **One primary per route.** No fallbacks, no Split, no retry, no budget, no custom timeouts yet.
+- **Routing**: one primary per route, plus an ordered `fallbacks=[...]` chain of additional providers.
+- **Retry / failover**: `RetryPolicy` renders end-to-end (attempts, per-retry timeout, backoff, product-level retry reasons). One `RetryPolicy` per `Gateway` today — differing policies across routes are not yet supported.
 
-Anything else the builder accepts (Bedrock, Azure, Vertex, Cohere, AWSAnthropic, GCPAnthropic, fallbacks, weighted splits, `RetryPolicy`, `Budget`, `Timeouts`) raises a clear `NotImplementedError` from the renderer and is landing release by release — see the [changelog](CHANGELOG.md).
+Anything else the builder accepts (Bedrock, Azure, Vertex, Cohere, AWSAnthropic, GCPAnthropic, weighted splits, `Budget`, custom `Timeouts`) raises a clear `NotImplementedError` from the renderer and is landing release by release — see the [changelog](CHANGELOG.md).
 
 ## Examples
 
@@ -129,12 +130,12 @@ Alpha. Shipped today:
 
 - **Builder API** — `Gateway`, eight provider classes, auth helpers (env/secret/header + `aws`/`azure`/`gcp` namespaces), `RetryPolicy` / `Budget` / `Privacy` / `Timeouts`, typed errors.
 - **Runtime** — `Gateway.local()` (background subprocess), `Gateway.serve()` (foreground), `Gateway.complete()` / `acomplete()`, module-level `envoyai.complete()` / `acomplete()` backed by an implicit singleton.
-- **Renderer** — `OpenAI` and `Anthropic` providers, one primary per route, `ea.env(...)` auth. Designed so each additional API-key provider is a one-row registry addition.
+- **Renderer** — `OpenAI` and `Anthropic` providers, primary + ordered `fallbacks=[...]` chains, `RetryPolicy` via `BackendTrafficPolicy` (product-level reasons → Envoy triggers + status codes), `ea.env(...)` auth. Designed so each additional API-key provider is a one-row registry addition.
 - **Binary management** — first-call auto-download of the pinned `aigw` release, `envoyai download-aigw` / `where` / `version` CLI, `ENVOYAI_AIGW_PATH` escape hatch.
 
 Coming in upcoming releases, roughly in order:
 
-- **Bedrock renderer** (three AWS credential modes), then fallback + `RetryPolicy` rendering via `BackendTrafficPolicy` — together these turn the failover example into a real round-trip.
+- **Bedrock renderer** (three AWS credential modes) — lights up the full failover example once AWS-credentialed backends can participate in the fallback chain.
 - **Timeouts**, weighted Split, aliases.
 - **Cost ledger** against versioned price sheets; then `Budget` alerts and enforcement.
 - **Azure**, Cohere, GCP Vertex, AWSAnthropic, GCPAnthropic renderers.

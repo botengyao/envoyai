@@ -76,6 +76,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Renderer refactored to a provider-spec table so adding the next API-key
   family is a one-row change. Unsupported providers now surface the list
   of supported ones in the error message.
+- Fallback chains and `RetryPolicy` now render through `aigw`. Routes
+  with `fallbacks=[...]` emit prioritized `backendRefs` on the
+  `AIGatewayRoute` rule (primary = `priority: 0`, each fallback gets the
+  next index). A `BackendTrafficPolicy` carries the retry envelope:
+  `attempts` → `numRetries = attempts - 1`, `attempts_per_step` →
+  `numAttemptsPerPriority`, `per_retry_timeout` / `backoff_base` /
+  `backoff_max` → the `perRetry` block. `RetryPolicy.on` reasons map to
+  Envoy triggers + HTTP status codes (`rate_limit` → 429 +
+  `envoy-ratelimited`, `server_error` → 500/502/503/504, `timeout` → 504,
+  `connection_error` → `connect-failure`/`reset`/`refused-stream`).
+  Declaring `fallbacks=[...]` without an explicit `RetryPolicy` injects
+  a sane failover default (one attempt per priority, retry on connection
+  errors and 5xx) so the chain actually walks. One `RetryPolicy` per
+  `Gateway` today — differing policies across routes raise
+  `NotImplementedError`. Flagship proxy-mode example
+  (`examples/b_proxy_mode/server.py`) now renders and runs end-to-end.
 - README reorganized: hero quick start, two-modes section, `Why envoyai`
   differentiators, and a flat index of `examples/`.
 - Smoke tests covering the public surface and the README example.

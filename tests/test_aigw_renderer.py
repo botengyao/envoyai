@@ -221,17 +221,6 @@ def test_unsupported_provider_lists_what_is_supported() -> None:
     assert "Anthropic" in msg
 
 
-def test_fallbacks_not_supported_yet() -> None:
-    openai = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
-    gw = ea.Gateway("team-a")
-    gw.model("chat").route(
-        primary=openai("gpt-4o"),
-        fallbacks=[openai("gpt-4o-mini")],
-    )
-    with pytest.raises(NotImplementedError, match="fallbacks"):
-        render_resources(gw)
-
-
 def test_split_primary_not_supported_yet() -> None:
     openai = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
     gw = ea.Gateway("team-a")
@@ -240,9 +229,219 @@ def test_split_primary_not_supported_yet() -> None:
         render_resources(gw)
 
 
-def test_retry_not_supported_yet() -> None:
+# ---------------------------------------------------------------------------
+# Fallback + RetryPolicy rendering (BackendTrafficPolicy)
+# ---------------------------------------------------------------------------
+
+
+def test_single_primary_omits_priority_and_btp() -> None:
+    """Backwards-compatible: no fallbacks and no retry → no BTP doc, no
+    ``priority`` field on the single backendRef."""
+    resources = render_resources(_openai_gateway())
+    kinds = [r["kind"] for r in resources]
+    assert "BackendTrafficPolicy" not in kinds
+    (route,) = [r for r in resources if r["kind"] == "AIGatewayRoute"]
+    (ref,) = route["spec"]["rules"][0]["backendRefs"]
+    assert "priority" not in ref
+
+
+def test_fallback_emits_prioritized_backend_refs() -> None:
+    openai = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
+    anthropic = ea.Anthropic(api_key=ea.env("ANTHROPIC_API_KEY"))
+    gw = ea.Gateway("team-a")
+    gw.model("chat").route(
+        primary=openai("gpt-4o"),
+        fallbacks=[anthropic("claude-sonnet-4")],
+    )
+    (route,) = [r for r in render_resources(gw) if r["kind"] == "AIGatewayRoute"]
+    refs = route["spec"]["rules"][0]["backendRefs"]
+    assert len(refs) == 2
+    assert refs[0]["priority"] == 0
+    assert refs[1]["priority"] == 1
+    assert refs[0]["name"].endswith("-openai")
+    assert refs[1]["name"].endswith("-anthropic")
+    # modelNameOverride preserved per-slot.
+    assert refs[0]["modelNameOverride"] == "gpt-4o"
+    assert refs[1]["modelNameOverride"] == "claude-sonnet-4"
+
+
+def test_fallback_without_explicit_retry_still_emits_btp() -> None:
+    """If you declare fallbacks, failover has to actually fire — which
+    means a BTP with retry triggers. Injecting a sane default is better
+    than silently producing a chain that never walks."""
+    openai = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
+    anthropic = ea.Anthropic(api_key=ea.env("ANTHROPIC_API_KEY"))
+    gw = ea.Gateway("team-a")
+    gw.model("chat").route(
+        primary=openai("gpt-4o"),
+        fallbacks=[anthropic("claude-sonnet-4")],
+    )
+    (btp,) = [r for r in render_resources(gw) if r["kind"] == "BackendTrafficPolicy"]
+    retry = btp["spec"]["retry"]
+    assert retry["numAttemptsPerPriority"] == 1
+    # Default failover retries on connection errors and 5xx.
+    triggers = set(retry["retryOn"]["triggers"])
+    assert {"connect-failure", "retriable-status-codes"}.issubset(triggers)
+    assert 500 in retry["retryOn"]["httpStatusCodes"]
+
+
+def test_btp_targets_httproute_with_gateway_name() -> None:
+    """aigw generates an HTTPRoute whose name matches the AIGatewayRoute;
+    the BTP must target that name, not the Gateway CR."""
     openai = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
     gw = ea.Gateway("team-a")
-    gw.model("chat").route(primary=openai("gpt-4o"), retry=ea.RetryPolicy.fail_fast())
+    gw.model("chat").route(
+        primary=openai("gpt-4o"), retry=ea.RetryPolicy.fail_fast()
+    )
+    (btp,) = [r for r in render_resources(gw) if r["kind"] == "BackendTrafficPolicy"]
+    (target,) = btp["spec"]["targetRefs"]
+    assert target == {
+        "group": "gateway.networking.k8s.io",
+        "kind": "HTTPRoute",
+        "name": "team-a",
+    }
+
+
+def test_retry_policy_translates_attempts() -> None:
+    """``attempts`` is total attempts across the chain; aigw's numRetries
+    is the retry count, i.e. attempts - 1."""
+    openai = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
+    gw = ea.Gateway("team-a")
+    gw.model("chat").route(
+        primary=openai("gpt-4o"),
+        retry=ea.RetryPolicy(attempts=5, attempts_per_step=2, on=["rate_limit"]),
+    )
+    (btp,) = [r for r in render_resources(gw) if r["kind"] == "BackendTrafficPolicy"]
+    retry = btp["spec"]["retry"]
+    assert retry["numRetries"] == 4
+    assert retry["numAttemptsPerPriority"] == 2
+
+
+def test_retry_policy_rate_limit_reasons_map_to_429() -> None:
+    openai = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
+    gw = ea.Gateway("team-a")
+    gw.model("chat").route(
+        primary=openai("gpt-4o"),
+        retry=ea.RetryPolicy(on=["rate_limit"]),
+    )
+    (btp,) = [r for r in render_resources(gw) if r["kind"] == "BackendTrafficPolicy"]
+    retry_on = btp["spec"]["retry"]["retryOn"]
+    assert retry_on["httpStatusCodes"] == [429]
+    assert "envoy-ratelimited" in retry_on["triggers"]
+    # retriable-status-codes is required for any listed httpStatusCodes to
+    # actually trigger a retry.
+    assert "retriable-status-codes" in retry_on["triggers"]
+
+
+def test_retry_policy_fail_fast_emits_inert_btp() -> None:
+    """fail_fast = 1 attempt, no retry reasons. aigw still needs retryOn
+    populated, but with numRetries=0 nothing fires."""
+    openai = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
+    gw = ea.Gateway("team-a")
+    gw.model("chat").route(
+        primary=openai("gpt-4o"), retry=ea.RetryPolicy.fail_fast()
+    )
+    (btp,) = [r for r in render_resources(gw) if r["kind"] == "BackendTrafficPolicy"]
+    retry = btp["spec"]["retry"]
+    assert retry["numRetries"] == 0
+    assert retry["retryOn"]  # non-empty (aigw requires it)
+
+
+def test_retry_policy_backoff_and_timeout_forwarded() -> None:
+    openai = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
+    gw = ea.Gateway("team-a")
+    gw.model("chat").route(
+        primary=openai("gpt-4o"),
+        retry=ea.RetryPolicy(
+            attempts=2,
+            per_retry_timeout="45s",
+            backoff_base="250ms",
+            backoff_max="20s",
+            on=["server_error"],
+        ),
+    )
+    (btp,) = [r for r in render_resources(gw) if r["kind"] == "BackendTrafficPolicy"]
+    per = btp["spec"]["retry"]["perRetry"]
+    assert per["timeout"] == "45s"
+    assert per["backOff"]["baseInterval"] == "250ms"
+    assert per["backOff"]["maxInterval"] == "20s"
+
+
+def test_fallback_plus_retry_policy_combines() -> None:
+    """Fallback chain + explicit RetryPolicy: the BTP carries the user's
+    policy (not the injected failover default), and backendRefs stay
+    prioritized."""
+    openai = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
+    anthropic = ea.Anthropic(api_key=ea.env("ANTHROPIC_API_KEY"))
+    gw = ea.Gateway("team-a")
+    gw.model("chat").route(
+        primary=openai("gpt-4o"),
+        fallbacks=[anthropic("claude-sonnet-4")],
+        retry=ea.RetryPolicy.rate_limit_tolerant(),
+    )
+    resources = render_resources(gw)
+    (route,) = [r for r in resources if r["kind"] == "AIGatewayRoute"]
+    assert [ref["priority"] for ref in route["spec"]["rules"][0]["backendRefs"]] == [0, 1]
+    (btp,) = [r for r in resources if r["kind"] == "BackendTrafficPolicy"]
+    retry = btp["spec"]["retry"]
+    # rate_limit_tolerant preset: attempts=5, on=[rate_limit, server_error]
+    assert retry["numRetries"] == 4
+    status = set(retry["retryOn"]["httpStatusCodes"])
+    assert 429 in status
+    assert 500 in status
+
+
+def test_fallback_same_provider_deduplicates_backend() -> None:
+    """Primary and fallback on the same provider instance emit one
+    AIServiceBackend — fallback pricing and auth don't change by
+    referencing the same upstream twice."""
+    openai = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
+    gw = ea.Gateway("team-a")
+    gw.model("chat").route(
+        primary=openai("gpt-4o"),
+        fallbacks=[openai("gpt-4o-mini")],
+    )
+    resources = render_resources(gw)
+    backends = [r for r in resources if r["kind"] == "AIServiceBackend"]
+    assert len(backends) == 1
+    (route,) = [r for r in resources if r["kind"] == "AIGatewayRoute"]
+    refs = route["spec"]["rules"][0]["backendRefs"]
+    # Both refs share the backend; the modelNameOverride disambiguates.
+    assert refs[0]["name"] == refs[1]["name"]
+    assert refs[0]["modelNameOverride"] == "gpt-4o"
+    assert refs[1]["modelNameOverride"] == "gpt-4o-mini"
+
+
+def test_differing_retry_policies_across_routes_rejected() -> None:
+    openai = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
+    gw = ea.Gateway("team-a")
+    gw.model("chat").route(
+        primary=openai("gpt-4o"), retry=ea.RetryPolicy.fail_fast()
+    )
+    gw.model("other").route(
+        primary=openai("gpt-4o-mini"), retry=ea.RetryPolicy.rate_limit_tolerant()
+    )
     with pytest.raises(NotImplementedError, match="RetryPolicy"):
+        render_resources(gw)
+
+
+def test_same_retry_policy_across_routes_is_fine() -> None:
+    openai = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
+    policy = ea.RetryPolicy.fail_fast()
+    gw = ea.Gateway("team-a")
+    gw.model("chat").route(primary=openai("gpt-4o"), retry=policy)
+    gw.model("other").route(primary=openai("gpt-4o-mini"), retry=policy)
+    resources = render_resources(gw)
+    btps = [r for r in resources if r["kind"] == "BackendTrafficPolicy"]
+    assert len(btps) == 1
+
+
+def test_fallback_split_not_supported_yet() -> None:
+    openai = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
+    gw = ea.Gateway("team-a")
+    gw.model("chat").route(
+        primary=openai("gpt-4o"),
+        fallbacks=[{openai("gpt-4o-mini"): 9, openai("gpt-3.5-turbo"): 1}],
+    )
+    with pytest.raises(NotImplementedError, match="Split"):
         render_resources(gw)
