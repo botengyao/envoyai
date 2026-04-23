@@ -316,6 +316,58 @@ Anthropic / Bedrock / Vertex / Cohere in the same gateway.
 | envoyai + gRPC `ConfigSource` (B, planned) | Python `Gateway` | gRPC push to aigw | sub-second | yes | full (via aigw ExtProc) |
 | envoyai xDS direct (C, planned) | Python `Gateway` | gRPC xDS to Envoy | sub-second | yes | OpenAI-compat only |
 
+### Deployment topologies — where the pieces physically live
+
+The control-plane shapes above describe *how* config reaches the
+runtime. Where the pieces live is a separate axis — and a useful one.
+Envoy's native xDS client makes "many data planes, one control plane"
+a standard deployment even when each data plane runs on-device.
+
+**Topology 1 — single process (envoyai today).** Python control plane
+and aigw / Envoy runtime on the same machine. No network for config;
+the listener is local.
+
+**Topology 2 — central control plane, on-device runtime.** One
+envoyai instance exposes gRPC xDS (or a gRPC `ConfigSource` inside
+aigw, once (B) lands) and serves many edge / laptop / node runtimes.
+Each runtime still handles requests locally — translation via aigw's
+ExtProc filter and upstream TLS both happen next to whoever is
+calling — but policy is owned centrally.
+
+```
+                           edge / laptop / node
+                           ┌──────────────────┐
+   ┌──────────────┐  xDS   │ aigw (Envoy)     │ ─▶ OpenAI / Anthropic / …
+   │ envoyai      │ ─────▶ └──────────────────┘
+   │ central      │  xDS   ┌──────────────────┐
+   │ control      │ ─────▶ │ aigw (Envoy)     │ ─▶ local vLLM / Ollama
+   │ plane        │  xDS   └──────────────────┘
+   │              │ ─────▶ ┌──────────────────┐
+   │              │        │ aigw (Envoy)     │ ─▶ Bedrock in this region
+   └──────────────┘        └──────────────────┘
+   one Python               N on-device runtimes; each translates
+   source of truth          OpenAI↔native formats next to the upstream
+```
+
+This is the shape that gets interesting on-device: each node runs
+aigw locally, but config comes from one place. "Use model X in eu-west,
+model Y everywhere else" or "rotate the Anthropic key fleet-wide" is a
+single Python edit pushed down as an xDS snapshot — no per-node deploy,
+no staggered restarts. Envoy's xDS subscription makes this a runtime
+primitive; the application layer needs no polling or reload logic.
+
+Mixed fleets work on the same control plane: aigw nodes where
+upstreams include Anthropic / Bedrock / Vertex, plain-Envoy nodes
+where the upstream set is OpenAI-compatible only and the ExtProc
+filter isn't needed. (B) enables the aigw side; (C) enables the plain
+Envoy side.
+
+**Topology 3 — in-cluster (Kubernetes-native).** aigw runs as a
+cluster controller; envoyai's `render_k8s()` / `apply()` / `deploy()`
+(roadmap) writes CRDs into etcd; aigw watches them. Compatible with
+GitOps; standard Kubernetes operational shape for teams that already
+live there.
+
 ### The honest endgame
 
 A hybrid: **envoyai as a gRPC control plane, aigw as the runtime**,
@@ -323,7 +375,9 @@ where aigw accepts either its K8s watch or envoyai's gRPC stream as
 interchangeable `ConfigSource`s. Typed Python stays the source of
 truth; aigw keeps owning data-plane translation. (C) remains on the
 board as the lean option for OpenAI-compat-only deployments. (A) is
-the ladder rung we're on today.
+the ladder rung we're on today. Topology 2 is what that endgame
+unlocks — a central envoyai controlling a fleet of on-device runtimes
+with no K8s in the middle.
 
 ---
 
