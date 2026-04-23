@@ -1,106 +1,198 @@
 # envoyai
 
-**A production-grade LLM gateway, configured in Python.** Two lines for the quickstart, typed Python for anything beyond. Built on [Envoy AI Gateway](https://github.com/envoyproxy/ai-gateway): routing, retries, provider translation, and auth injection all happen in a real Envoy proxy — not inside your Python process. No YAML, no cluster knowledge, no client-side provider juggling.
+**A production-grade LLM gateway, configured in Python.**
+Routing, retries, fallbacks, provider translation, and auth injection run
+in a real [Envoy AI Gateway](https://github.com/envoyproxy/ai-gateway)
+process — not inside your Python code. No YAML. No Kubernetes. No
+client-side provider juggling.
 
-## Quick start
+## 30-second demo
 
 ```bash
 pip install envoyai
 export OPENAI_API_KEY=sk-...
 ```
 
-Two lines of Python:
-
 ```python
 import envoyai as ea
-resp = ea.complete(model="gpt-4o-mini",
-                   messages=[{"role": "user", "content": "hi"}])
+resp = ea.complete(
+    model="gpt-4o-mini",
+    messages=[{"role": "user", "content": "hi"}],
+)
 ```
 
-An implicit, process-wide gateway is marked active against `127.0.0.1:1975`; `gpt-*` / `claude-*` / `anthropic.*` / `command-*` model names auto-register to the right provider. For anything beyond the happy path, drop to the full builder:
+Under the hood, envoyai spawned an `aigw` subprocess, pointed a listener
+at `127.0.0.1:1975`, auto-registered `gpt-*` against OpenAI, and routed
+your call through it. The real API key never touched the Python client.
+
+## How it fits together
+
+```mermaid
+flowchart LR
+    Client["Your app<br/>(any language)"]
+    Py["Gateway config<br/>(Python, typed)"]
+    Aigw["aigw / Envoy<br/>listener :1975"]
+
+    OpenAI["OpenAI"]
+    Anthropic["Anthropic"]
+    Future["Bedrock / Azure<br/>Vertex / Cohere"]
+
+    Env[("OPENAI_API_KEY<br/>ANTHROPIC_API_KEY")]
+
+    Py ==>|renders + spawns| Aigw
+    Client -->|HTTP| Aigw
+    Aigw -->|primary| OpenAI
+    Aigw -.->|fallback| Anthropic
+    Aigw -.-> Future
+    Env -.->|envsubst at startup| Aigw
+
+    classDef future stroke-dasharray:5 5,stroke:#999,color:#666;
+    class Future future;
+```
+
+You define a `Gateway` in typed Python. envoyai renders it to a
+multi-doc YAML and hands it to the pinned `aigw` binary, which starts an
+Envoy listener and handles every request from there. Your app — Python,
+Node, Go, curl, whatever — speaks plain OpenAI-format HTTP to the
+listener and sees identical behavior regardless of which upstream
+actually served the request. API keys enter the gateway process via env
+vars at startup and never leave it.
+
+## Full example
 
 ```python
 import envoyai as ea
+
+openai    = ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))
+anthropic = ea.Anthropic(api_key=ea.env("ANTHROPIC_API_KEY"))
 
 gw = ea.Gateway()
 gw.model("chat").route(
-    primary=ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))("gpt-4o-mini")
+    primary=openai("gpt-4o"),
+    fallbacks=[anthropic("claude-sonnet-4")],
+    retry=ea.RetryPolicy.rate_limit_tolerant(),
 )
-gw.local()                              # renders YAML, spawns `aigw run`,
-                                        # waits for readiness on :1975
+gw.model("fast").route(primary=openai("gpt-4o-mini"))
 
-resp = gw.complete("chat", "hi")
+gw.local()                                  # background aigw subprocess
+resp = gw.complete("chat", "hi")            # retry + fallback applied
 print(resp.choices[0].message.content)
 ```
 
-Any OpenAI-compatible client (any language) can hit the gateway too:
+Same `Gateway` works in proxy mode — swap `gw.local()` for `gw.serve()`
+(blocks the process) and call from any OpenAI-compatible client:
 
 ```python
 from openai import OpenAI
 client = OpenAI(base_url="http://127.0.0.1:1975", api_key="unused")
-client.chat.completions.create(model="chat",
-                               messages=[{"role": "user", "content": "hi"}])
+client.chat.completions.create(
+    model="chat",
+    messages=[{"role": "user", "content": "hi"}],
+)
 ```
 
-Your application keeps using the OpenAI SDK it already has. The real provider key stays server-side in the gateway's auth policy and is injected upstream — it never touches the Python client.
+```bash
+curl http://127.0.0.1:1975/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"chat","messages":[{"role":"user","content":"hi"}]}'
+```
 
 ## Three entry points
 
-| Style | File | When to use |
+| Style | Snippet | When to use |
 |---|---|---|
-| **Two-liner** — [`examples/00_two_liner.py`](examples/00_two_liner.py) | `ea.complete(model=..., messages=...)` with an implicit singleton gateway | Quick scripts, trying things out |
-| **SDK mode** — [`examples/a_sdk_mode.py`](examples/a_sdk_mode.py) | `gw = ea.Gateway()` + `gw.local()` + `gw.complete()` | Explicit gateway in the same process |
-| **Proxy mode** — [`examples/b_proxy_mode/`](examples/b_proxy_mode/) | `gw.serve()` blocking + any OpenAI client (any language) | Multi-language stacks, shared dev servers |
+| **Two-liner** [`examples/00`](examples/00_two_liner.py) | `ea.complete(model=..., messages=...)` | Quick scripts, trying things out |
+| **SDK mode** [`examples/a`](examples/a_sdk_mode.py) | `gw.local()` + `gw.complete()` | Explicit gateway, same process |
+| **Proxy mode** [`examples/b`](examples/b_proxy_mode/) | `gw.serve()` + any OpenAI client | Multi-language, shared dev / prod |
 
 Same `Gateway` config drives all three.
 
+## Today's runtime
+
+`gw.local()` / `gw.serve()` actually render and run for this surface:
+
+| | Status |
+|---|---|
+| **Providers** — `OpenAI`, `Anthropic` (native API), coexisting in one `Gateway` | ✅ ready |
+| **Auth** — `ea.env(...)` rendered as `${VAR}` for `aigw` envsubst | ✅ ready |
+| **Routing** — one primary per route + ordered `fallbacks=[...]` chain | ✅ ready |
+| **Retry / failover** — `RetryPolicy` → aigw `BackendTrafficPolicy` (attempts, per-retry timeout, backoff, product-level reasons) | ✅ ready |
+| **Binary management** — auto-download of the pinned `aigw` on first call | ✅ ready |
+| **Providers** — Bedrock, Azure, Vertex, Cohere, AWSAnthropic, GCPAnthropic | 🚧 gated (builder accepts, renderer errors clearly) |
+| **Routing** — weighted `Split`, differing `RetryPolicy` per route | 🚧 gated |
+| **Policies** — `Budget`, custom `Timeouts` | 🚧 gated |
+| **Outputs** — `render_k8s()` / `apply()` / `deploy()` / `diff()` | 🚧 stubs |
+
+Gated items raise a clear `NotImplementedError` from the renderer rather
+than silently doing less than you asked — see [CHANGELOG.md](CHANGELOG.md)
+for release-by-release progress.
+
 ## Why envoyai
 
-- **The proxy is Envoy, not Python.** Routing, retries, circuit breaking, and cost attribution run in an `aigw` subprocess that this library manages for you. Python clients point at `http://127.0.0.1:<port>` with a placeholder `api_key="unused"`; the real upstream key lives server-side.
-- **Every language, one config.** Because the gateway is a real proxy, Python, Node, Go, Ruby, and curl clients all see identical behavior without a per-language SDK.
-- **Typed Python config, not growing YAML.** Providers, routes, fallbacks, retries, and budgets are Pydantic-validated objects with IDE autocomplete. `Gateway._validate()` reports every problem in a single error before any subprocess starts.
-- **No module-level mutable state.** All configuration lives on a `Gateway` instance; a regression test fails the build if anyone adds global config knobs at `envoyai.*`.
-- **Cost from metrics, not hardcoded tables.** Spend will be computed from gateway-emitted token counts against [versioned price sheets](src/envoyai/_internal/prices/). Historical queries use the sheet in effect at the time of the request.
-- **Safe-by-default privacy.** Auth headers redacted; prompt and response bodies stay out of logs and callbacks unless you opt in via `gw.privacy(...)`.
-- **Structured, typed errors** with always-populated fields (`retry_after_s`, `provider`, `model`, `trace_id`) and a `.cause` attribute for underlying exceptions.
+- **The proxy is Envoy, not Python.** Routing, retries, circuit
+  breaking, and cost attribution run in a subprocess. Python clients
+  point at `http://127.0.0.1:<port>` with a placeholder `api_key="unused"`;
+  the real upstream key lives server-side.
+- **Every language, one config.** Any OpenAI-compatible client —
+  Python, Node, Go, Ruby, curl — sees identical behavior without a
+  per-language SDK.
+- **Typed Python, not growing YAML.** Providers, routes, fallbacks,
+  retries, and budgets are Pydantic-validated objects with IDE
+  autocomplete. `Gateway._validate()` reports every problem in a single
+  error before any subprocess starts.
+- **No module-level mutable state.** All configuration lives on a
+  `Gateway` instance; a regression test fails the build if anyone adds
+  global config knobs at `envoyai.*`.
+- **Cost from metrics, not hardcoded tables.** Spend will be computed
+  from gateway-emitted token counts against
+  [versioned price sheets](src/envoyai/_internal/prices/). Historical
+  queries use the sheet in effect at the time of the request.
+- **Safe-by-default privacy.** Auth headers redacted; prompt and
+  response bodies stay out of logs and callbacks unless you opt in via
+  `gw.privacy(...)`.
+- **Structured, typed errors** with always-populated fields
+  (`retry_after_s`, `provider`, `model`, `trace_id`) and a `.cause`
+  attribute for underlying exceptions.
 
 ## Install
 
 ```bash
-pip install envoyai              # library (includes the OpenAI SDK for same-process calls)
+pip install envoyai              # library (OpenAI SDK included)
 pip install envoyai[admin]       # + admin UI backend (coming)
 pip install envoyai[dev]         # + pytest, mypy, ruff for contributors
 ```
 
-On the first call to `gw.local()` / `gw.serve()`, envoyai downloads the pinned [`aigw`](https://github.com/envoyproxy/ai-gateway) binary into `~/.cache/envoyai/bin/` and runs from there — no Go toolchain required. Subsequent calls reuse the cache.
+On the first call to `gw.local()` / `gw.serve()`, envoyai downloads the
+pinned [`aigw`](https://github.com/envoyproxy/ai-gateway) binary into
+`~/.cache/envoyai/bin/` and runs from there — no Go toolchain required.
+Subsequent calls reuse the cache.
 
 Escape hatches for the auto-download:
 
 | | |
 |---|---|
-| **Pre-fetch** | `envoyai download-aigw` (useful in CI, Dockerfile `RUN`, air-gapped installs) |
+| **Pre-fetch** | `envoyai download-aigw` (CI, Dockerfile `RUN`, air-gapped installs) |
 | **Bring your own binary** | `export ENVOYAI_AIGW_PATH=/path/to/aigw` |
-| **Use a `$PATH` install** | `brew install aigw` or `go install github.com/envoyproxy/ai-gateway/cmd/aigw@latest` — anything on `PATH` wins over the cache |
+| **Use a `$PATH` install** | `brew install aigw` or `go install github.com/envoyproxy/ai-gateway/cmd/aigw@latest` — `$PATH` wins over the cache |
 | **Check what got resolved** | `envoyai where` |
 
-Supported auto-download targets: `linux/amd64`, `linux/arm64`, `darwin/arm64`. Other platforms need a locally-built binary (set `ENVOYAI_AIGW_PATH`).
+Supported auto-download targets: `linux/amd64`, `linux/arm64`,
+`darwin/arm64`. Other platforms: build locally and set
+`ENVOYAI_AIGW_PATH`.
 
 ## Providers
 
-Typed classes for every backend: `OpenAI`, `AzureOpenAI`, `Bedrock`, `AWSAnthropic`, `Anthropic`, `Cohere`, `GCPVertex`, `GCPAnthropic`, and any OpenAI-compatible endpoint (vLLM, Ollama, text-generation-inference, self-hosted proxies) by passing `base_url` to `OpenAI`.
+Typed classes for every backend: `OpenAI`, `AzureOpenAI`, `Bedrock`,
+`AWSAnthropic`, `Anthropic`, `Cohere`, `GCPVertex`, `GCPAnthropic`, and
+any OpenAI-compatible endpoint (vLLM, Ollama, text-generation-inference,
+self-hosted proxies) by passing `base_url` to `OpenAI`.
 
-**Today's runtime scope.** `gw.local()` / `gw.serve()` render and run for these configurations:
-
-- **Providers**: `OpenAI`, `Anthropic` (native API). Multiple providers coexist in one `Gateway`; each logical model can point at either.
-- **Auth**: `ea.env(...)` (rendered as `${VAR}` for `aigw`'s envsubst).
-- **Routing**: one primary per route, plus an ordered `fallbacks=[...]` chain of additional providers.
-- **Retry / failover**: `RetryPolicy` renders end-to-end (attempts, per-retry timeout, backoff, product-level retry reasons). One `RetryPolicy` per `Gateway` today — differing policies across routes are not yet supported.
-
-Anything else the builder accepts (Bedrock, Azure, Vertex, Cohere, AWSAnthropic, GCPAnthropic, weighted splits, `Budget`, custom `Timeouts`) raises a clear `NotImplementedError` from the renderer and is landing release by release — see the [changelog](CHANGELOG.md).
+The builder accepts all of them today; see **Today's runtime** above for
+what actually renders to `aigw`.
 
 ## Examples
 
-[`examples/`](examples/) has one short, self-contained script per task:
+[`examples/`](examples/) has one short, self-contained script per task.
 
 | # | File | What it shows |
 |---|---|---|
@@ -121,26 +213,38 @@ Anything else the builder accepts (Bedrock, Azure, Vertex, Cohere, AWSAnthropic,
 | 14 | [privacy](examples/14_privacy.py) | Redaction defaults and overrides |
 | 15 | [handling_errors](examples/15_handling_errors.py) | Build-time and request-time errors |
 
-The builder accepts every example's configuration today; the subset in **Today's runtime scope** above is what renders and runs through `aigw` right now. The rest will light up release by release — see the [changelog](CHANGELOG.md).
-
 ## Status
 
 Alpha. Shipped today:
 
-- **Builder API** — `Gateway`, eight provider classes, auth helpers (env/secret/header + `aws`/`azure`/`gcp` namespaces), `RetryPolicy` / `Budget` / `Privacy` / `Timeouts`, typed errors.
-- **Runtime** — `Gateway.local()` (background subprocess), `Gateway.serve()` (foreground), `Gateway.complete()` / `acomplete()`, module-level `envoyai.complete()` / `acomplete()` backed by an implicit singleton.
-- **Renderer** — `OpenAI` and `Anthropic` providers, primary + ordered `fallbacks=[...]` chains, `RetryPolicy` via `BackendTrafficPolicy` (product-level reasons → Envoy triggers + status codes), `ea.env(...)` auth. Designed so each additional API-key provider is a one-row registry addition.
-- **Binary management** — first-call auto-download of the pinned `aigw` release, `envoyai download-aigw` / `where` / `version` CLI, `ENVOYAI_AIGW_PATH` escape hatch.
+- **Builder API** — `Gateway`, eight provider classes, auth helpers
+  (env/secret/header + `aws`/`azure`/`gcp`), `RetryPolicy` / `Budget` /
+  `Privacy` / `Timeouts`, typed errors.
+- **Runtime** — `Gateway.local()` (background subprocess),
+  `Gateway.serve()` (foreground), `Gateway.complete()` / `acomplete()`,
+  module-level `envoyai.complete()` / `acomplete()` backed by an implicit
+  singleton.
+- **Renderer** — `OpenAI` and `Anthropic`, primary + ordered
+  `fallbacks=[...]`, `RetryPolicy` via `BackendTrafficPolicy`,
+  `ea.env(...)` auth. Each additional API-key provider is a one-row
+  registry addition.
+- **Binary management** — first-call auto-download of the pinned `aigw`,
+  `envoyai download-aigw` / `where` / `version` CLI, `ENVOYAI_AIGW_PATH`
+  escape hatch.
 
-Coming in upcoming releases, roughly in order:
+Coming, roughly in order:
 
-- **Bedrock renderer** (three AWS credential modes) — lights up the full failover example once AWS-credentialed backends can participate in the fallback chain.
-- **Timeouts**, weighted Split, aliases.
-- **Cost ledger** against versioned price sheets; then `Budget` alerts and enforcement.
-- **Azure**, Cohere, GCP Vertex, AWSAnthropic, GCPAnthropic renderers.
-- **Kubernetes output** — `render_k8s()` / `apply()` / `diff()` / `deploy()`.
-- **Admin UI** backend + SPA.
+1. **Bedrock renderer** (three AWS credential modes).
+2. **Timeouts**, weighted Split, aliases.
+3. **Cost ledger** against versioned price sheets; then `Budget` alerts
+   and enforcement.
+4. **Azure**, Cohere, GCP Vertex, AWSAnthropic, GCPAnthropic renderers.
+5. **Kubernetes output** — `render_k8s()` / `apply()` / `diff()` /
+   `deploy()`.
+6. **Admin UI** backend + SPA.
 
-Track the detailed roadmap and every release's additions in [`CHANGELOG.md`](CHANGELOG.md).
+Track every release in [`CHANGELOG.md`](CHANGELOG.md).
+
+---
 
 Developed at [github.com/botengyao/envoyai](https://github.com/botengyao/envoyai).
