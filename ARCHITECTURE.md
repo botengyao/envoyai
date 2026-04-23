@@ -4,11 +4,12 @@ This document explains how a Python `Gateway` object ends up serving
 HTTP traffic — what runs where, which files land on disk, and how a
 single client request walks through the system.
 
-Three views:
+Four views:
 
 1. [Whole system (build + runtime)](#1-whole-system-build--runtime)
 2. [Request path detail](#2-request-path-detail)
 3. [Where every rendered resource lives](#3-where-every-rendered-resource-lives)
+4. [Control plane: today and where it's going](#4-control-plane-today-and-where-its-going)
 
 ---
 
@@ -207,6 +208,122 @@ matching) live in the AI Gateway CRDs. Generic transport concerns
 (FQDN, TLS, retry, port listener) reuse Envoy Gateway and Gateway API
 primitives. Nothing is invented for envoyai — the Python SDK is a typed
 front-end over these four established projects.
+
+---
+
+## 4. Control plane: today and where it's going
+
+"Control plane" here means two things bundled: **where config comes
+from**, and **how it reaches the data plane**. The K8s-native story
+and envoyai's story share the same data plane (Envoy + aigw's ExtProc
+translation filter), but differ on the control-plane side.
+
+### Reference shape — aigw as a K8s controller
+
+When aigw is deployed in a cluster, its controller **watches the K8s
+API server** for CRD changes and reconciles them into Envoy xDS:
+
+```
+   ┌──────────────┐    watch + list    ┌────────────────┐   xDS    ┌──────────┐
+   │ K8s API      │ ◀────────────────── │ aigw           │ ──────▶ │ Envoy    │
+   │ (CRDs+etcd)  │                     │ controller     │         │ data     │
+   └──────────────┘                     │   reconciler   │         │ plane    │
+     ▲                                  │   xDS translator│        └──────────┘
+     │ kubectl apply                    │   ExtProc       │
+     │                                  └────────────────┘
+   your CI / GitOps
+```
+
+That's the K8s-native control plane. `kubectl apply` writes CRDs → aigw
+sees them via watch → Envoy gets a new xDS snapshot. Source of truth
+lives in etcd; propagation is event-driven via the K8s watch stream.
+
+### Today in envoyai — (A) file snapshot + respawn
+
+envoyai already **bypasses the K8s API watch** by using aigw's
+standalone mode. Python is the source of truth; file is the hand-off.
+
+```
+   ┌──────────────┐   render + write   ┌──────────────┐   aigw run  ┌──────────┐
+   │ envoyai      │ ────────────────▶ │ /tmp/xxx.yaml│ ──────────▶ │ aigw     │
+   │ Gateway (Py) │                    └──────────────┘              │ (Envoy)  │
+   │  (your code) │                                                  └──────────┘
+   └──────────────┘
+   on reconfigure:  LocalRun.stop() → re-render → spawn_background()
+```
+
+Pros: zero new infrastructure, works offline, no K8s dep. Cons: config
+updates are **snapshot-reload** — brief drop during respawn. Fine for
+dev and many prod shapes; not ideal for fleets or for sub-second
+reconfigure.
+
+### Planned — (B) gRPC `ConfigSource` upstream in aigw
+
+The cleanest long-term shape is to abstract aigw's source of config so
+K8s, file, and gRPC are interchangeable. Upstream design candidate:
+
+```
+                                   ┌──────────────────────────────────────┐
+                                   │ aigw                                 │
+                                   │   ┌──ConfigSource (interface)───┐    │
+                                   │   │  • K8sSource    (today)      │   │
+                                   │   │  • FileSource   (standalone) │   │
+   ┌──────────────┐   gRPC stream  │   │  • GrpcSource  ← envoyai ──┐ │   │
+   │ envoyai      │ ─────────────▶ │   └──────────────────────────────┘   │
+   │ Gateway (Py) │  pushed        │   reconciler + xDS + ExtProc         │
+   │ (control     │  snapshots     │   unchanged across all sources       │
+   │  plane)      │                │                                      │
+   └──────────────┘                └────────────┬─────────────────────────┘
+                                                │ xDS
+                                                ▼
+                                             Envoy data plane
+```
+
+Why this is the right endgame: aigw keeps owning wire-format
+translation (ExtProc), envoyai becomes the typed, version-controlled
+control plane, and the **K8s-native path is unchanged** for users who
+want it. Multi-quarter effort; requires a design proposal upstream at
+[envoyproxy/ai-gateway](https://github.com/envoyproxy/ai-gateway).
+
+### Alternative — (C) envoyai as its own xDS server
+
+The `Gateway.serve_xds(host, port)` roadmap item is a second control
+plane shape that skips aigw entirely:
+
+```
+   ┌──────────────┐      xDS (ADS, v3)      ┌──────────────────┐
+   │ envoyai      │ ──────────────────────▶ │ plain Envoy      │
+   │ Gateway (Py) │                         │   (no ExtProc)   │
+   │ + xDS server │                         │                  │
+   │              │                         │  OpenAI-compat   │
+   │              │                         │  upstreams only  │
+   └──────────────┘                         └──────────────────┘
+```
+
+Pros: sub-second pushed reconfigure, one Python process, no subprocess.
+Cons: **no wire-format translation** — without aigw's ExtProc filter,
+upstreams must all speak OpenAI format (OpenAI proper, `OpenAI(base_url=...)`
+for vLLM / Ollama / self-hosted, Azure OpenAI in compat mode). Right
+shape for homogeneous-fleet / edge deployments; wrong shape if you need
+Anthropic / Bedrock / Vertex / Cohere in the same gateway.
+
+### Comparison at a glance
+
+|  | source of truth | how the runtime learns | propagation latency | multi-replica | upstream set |
+|---|---|---|---|---|---|
+| aigw in K8s (reference) | CRDs in etcd | K8s watch | event-driven | yes (shared API server) | full (via ExtProc) |
+| envoyai today (A) | Python `Gateway` in memory | one-shot YAML + respawn | respawn cycle | no | full (via aigw ExtProc) |
+| envoyai + gRPC `ConfigSource` (B, planned) | Python `Gateway` | gRPC push to aigw | sub-second | yes | full (via aigw ExtProc) |
+| envoyai xDS direct (C, planned) | Python `Gateway` | gRPC xDS to Envoy | sub-second | yes | OpenAI-compat only |
+
+### The honest endgame
+
+A hybrid: **envoyai as a gRPC control plane, aigw as the runtime**,
+where aigw accepts either its K8s watch or envoyai's gRPC stream as
+interchangeable `ConfigSource`s. Typed Python stays the source of
+truth; aigw keeps owning data-plane translation. (C) remains on the
+board as the lean option for OpenAI-compat-only deployments. (A) is
+the ladder rung we're on today.
 
 ---
 
