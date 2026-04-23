@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned
+- **Framework integrations — Google ADK first.** Run ADK agents through
+  an envoyai-managed gateway by pointing ADK's OpenAI-compatible model
+  wrapper at the local `:1975` listener; routing, fallback, retry, and
+  (eventually) cost attribution happen once at the gateway rather than
+  per-agent. Recipe + a thin helper to build the ADK model from a
+  running `Gateway` handle. LangGraph / LlamaIndex recipes to follow.
+
 ### Added
 - Initial scaffold: `Gateway` builder, eight providers (OpenAI, AzureOpenAI,
   Bedrock, AWSAnthropic, Anthropic, Cohere, GCPVertex, GCPAnthropic), auth

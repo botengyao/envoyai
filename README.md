@@ -239,9 +239,16 @@ Coming, roughly in order:
 3. **Cost ledger** against versioned price sheets; then `Budget` alerts
    and enforcement.
 4. **Azure**, Cohere, GCP Vertex, AWSAnthropic, GCPAnthropic renderers.
-5. **Kubernetes output** — `render_k8s()` / `apply()` / `diff()` /
-   `deploy()`.
-6. **Admin UI** backend + SPA.
+5. **Kubernetes output** — `render_k8s()` / `apply()` / `deploy()` /
+   `diff()`.
+6. **Framework integrations** — first-class recipes and thin helpers
+   for running agents against an envoyai-managed gateway. Starting with
+   [Google ADK](https://github.com/google/adk-python): ADK agents point
+   at the local `:1975` listener through ADK's OpenAI-compatible model
+   plug-in, so routing, fallback, retry, and cost attribution happen
+   once at the gateway instead of per-agent. LangGraph / LlamaIndex
+   recipes to follow.
+7. **Admin UI** backend + SPA.
 
 Track every release in [`CHANGELOG.md`](CHANGELOG.md).
 
