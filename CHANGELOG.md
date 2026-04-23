@@ -8,12 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Planned
+- **Cost Analysis Center.** Versioned price sheets under
+  `_internal/prices/`, ingestion of per-request token counts from the
+  gateway, aggregation by team / user / model / tag, CLI + HTTP query
+  layer. Historical queries resolve against the price sheet in effect
+  at request time. `Budget` alerts and enforcement become a thin layer
+  on the same ledger.
+- **xDS remote control plane.** `Gateway.serve_xds(host, port)` exposes
+  envoyai as a gRPC ADS server (v3, SotW initially; delta later). Envoy
+  and `aigw` data planes connect with a minimal bootstrap pointing at
+  the control plane and receive Listener / Route / Cluster / Endpoint /
+  Secret updates streamed from the typed Python config. Enables one
+  central envoyai controlling a fleet of data planes, reconfigurable
+  live without restarts.
 - **Framework integrations — Google ADK first.** Run ADK agents through
   an envoyai-managed gateway by pointing ADK's OpenAI-compatible model
   wrapper at the local `:1975` listener; routing, fallback, retry, and
-  (eventually) cost attribution happen once at the gateway rather than
-  per-agent. Recipe + a thin helper to build the ADK model from a
-  running `Gateway` handle. LangGraph / LlamaIndex recipes to follow.
+  cost attribution happen once at the gateway rather than per-agent.
+  Recipe + a thin helper to build the ADK model from a running
+  `Gateway` handle. LangGraph / LlamaIndex recipes to follow.
 
 ### Added
 - Initial scaffold: `Gateway` builder, eight providers (OpenAI, AzureOpenAI,

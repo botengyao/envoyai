@@ -236,19 +236,31 @@ Coming, roughly in order:
 
 1. **Bedrock renderer** (three AWS credential modes).
 2. **Timeouts**, weighted Split, aliases.
-3. **Cost ledger** against versioned price sheets; then `Budget` alerts
-   and enforcement.
+3. **Cost Analysis Center** — versioned
+   [price sheets](src/envoyai/_internal/prices/), ingestion of
+   per-request token counts emitted by the gateway, aggregation by
+   team / user / model / tag, and a CLI + HTTP query layer. Historical
+   queries use the price sheet in effect at the time of the request.
+   `Budget` alerts and enforcement sit on top of the same ledger.
 4. **Azure**, Cohere, GCP Vertex, AWSAnthropic, GCPAnthropic renderers.
 5. **Kubernetes output** — `render_k8s()` / `apply()` / `deploy()` /
    `diff()`.
-6. **Framework integrations** — first-class recipes and thin helpers
+6. **xDS remote control plane** — `Gateway.serve_xds(host, port)` as a
+   live gRPC ADS server. Envoy (or `aigw`) data planes connect with a
+   minimal bootstrap pointing at the control plane and receive
+   Listener / Route / Cluster / Endpoint / Secret updates streamed from
+   the typed Python config — one central envoyai process configuring a
+   fleet of data planes, reconfigurable without restarts.
+7. **Framework integrations** — first-class recipes and thin helpers
    for running agents against an envoyai-managed gateway. Starting with
    [Google ADK](https://github.com/google/adk-python): ADK agents point
    at the local `:1975` listener through ADK's OpenAI-compatible model
    plug-in, so routing, fallback, retry, and cost attribution happen
    once at the gateway instead of per-agent. LangGraph / LlamaIndex
    recipes to follow.
-7. **Admin UI** backend + SPA.
+8. **Admin UI** backend + SPA (surfaces the Cost Analysis Center,
+   routes, live request stream, and fleet view of xDS-connected data
+   planes).
 
 Track every release in [`CHANGELOG.md`](CHANGELOG.md).
 
