@@ -1,0 +1,73 @@
+name: release
+
+# Tag-triggered release to PyPI via Trusted Publishing (OIDC).
+#
+# Setup (one-time):
+#   1. Upload 0.0.1 once via `twine upload dist/*` so the project exists on PyPI.
+#   2. PyPI → project → Publishing → add a pending Trusted Publisher:
+#        owner: botengyao
+#        repo:  envoyai
+#        workflow: release.yml
+#        environment: release
+#   3. GitHub → repo → Settings → Environments → create `release`.
+#
+# Usage: bump `version` in pyproject.toml AND src/envoyai/_version.py, tag,
+# and push the tag:
+#     git tag v0.0.2 && git push --tags
+# This workflow runs the test suite once, builds sdist+wheel, verifies the
+# tag matches the declared version, and publishes. No tokens stored anywhere.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -e '.[dev]'
+      - run: pytest -q
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify tag matches pyproject.toml version
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(python -c "import tomllib,sys; print(tomllib.loads(open('pyproject.toml','rb').read().decode())['project']['version'])")
+          if [ "$TAG" != "$PKG" ]; then
+            echo "::error::tag v$TAG does not match pyproject.toml version $PKG" >&2
+            exit 1
+          fi
+      - run: pip install --upgrade build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
