@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from openai import OpenAI
 
-client = OpenAI(base_url="http://localhost:1975", api_key="unused")
+client = OpenAI(base_url="http://localhost:1975/v1", api_key="unused")
 
 resp = client.chat.completions.create(
     model="chat",

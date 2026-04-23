@@ -83,7 +83,7 @@ def test_local_writes_yaml_spawns_aigw_and_probes(mocked_aigw: dict[str, Any]) -
     # LocalRun is attached and the Gateway knows it's running.
     assert run is gw._running
     assert run.port == 1975
-    assert run.base_url == "http://127.0.0.1:1975"
+    assert run.base_url == "http://127.0.0.1:1975/v1"
 
     # aigw was spawned with a path to a real temp file we can read.
     (spawn,) = mocked_aigw["spawn_calls"]

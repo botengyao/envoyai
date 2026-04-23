@@ -141,7 +141,7 @@ def test_complete_dispatches_to_local_gateway(fake_openai: dict[str, list[Any]])
 
     (client,) = fake_openai["sync"]
     assert client.api_key == "unused"
-    assert client.base_url == "http://127.0.0.1:1975"
+    assert client.base_url == "http://127.0.0.1:1975/v1"
 
     (call,) = client.chat.completions.calls
     assert call["model"] == "chat"  # logical name, not upstream
@@ -154,7 +154,7 @@ def test_acomplete_dispatches_to_local_gateway(fake_openai: dict[str, list[Any]]
 
     (client,) = fake_openai["async"]
     assert client.api_key == "unused"
-    assert client.base_url == "http://127.0.0.1:1975"
+    assert client.base_url == "http://127.0.0.1:1975/v1"
 
     (call,) = client.chat.completions.calls
     assert call["model"] == "chat"

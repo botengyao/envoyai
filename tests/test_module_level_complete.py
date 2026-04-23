@@ -116,7 +116,7 @@ def test_openai_auto_register_and_dispatch(
     # gateway; the gateway injects the real credential upstream.
     (client,) = fake_openai["sync"]
     assert client.api_key == "unused"
-    assert client.base_url == "http://127.0.0.1:1975"
+    assert client.base_url == "http://127.0.0.1:1975/v1"
 
     (call,) = client.chat.completions.calls
     assert call["model"] == "gpt-4o-mini"
@@ -142,7 +142,7 @@ def test_anthropic_auto_register_from_prefix(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     ea.complete(model="claude-sonnet-4", messages="hi")
     assert "claude-sonnet-4" in get_or_create()._routes
-    assert fake_openai["sync"][0].base_url == "http://127.0.0.1:1975"
+    assert fake_openai["sync"][0].base_url == "http://127.0.0.1:1975/v1"
 
 
 def test_bedrock_auto_register_from_prefix(
@@ -167,7 +167,7 @@ def test_acomplete_registers_and_awaits(
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
     asyncio.run(ea.acomplete(model="claude-sonnet-4", messages="hi"))
     assert "claude-sonnet-4" in get_or_create()._routes
-    assert fake_openai["async"][0].base_url == "http://127.0.0.1:1975"
+    assert fake_openai["async"][0].base_url == "http://127.0.0.1:1975/v1"
     assert fake_openai["async"][0].api_key == "unused"
 
 

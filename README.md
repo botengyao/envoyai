@@ -84,7 +84,7 @@ Same `Gateway` works in proxy mode — swap `gw.local()` for `gw.serve()`
 
 ```python
 from openai import OpenAI
-client = OpenAI(base_url="http://127.0.0.1:1975", api_key="unused")
+client = OpenAI(base_url="http://127.0.0.1:1975/v1", api_key="unused")
 client.chat.completions.create(
     model="chat",
     messages=[{"role": "user", "content": "hi"}],

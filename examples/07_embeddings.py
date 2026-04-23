@@ -15,7 +15,7 @@ gw.model("embed-small").route(primary=openai("text-embedding-3-small"))
 gw.model("embed-large").route(primary=openai("text-embedding-3-large"))
 gw.local()
 
-client = OpenAI(base_url="http://localhost:1975", api_key="unused")
+client = OpenAI(base_url="http://localhost:1975/v1", api_key="unused")
 
 resp = client.embeddings.create(
     model="embed-small",

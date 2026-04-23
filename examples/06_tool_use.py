@@ -14,7 +14,7 @@ gw = ea.Gateway()
 gw.model("chat").route(primary=ea.OpenAI(api_key=ea.env("OPENAI_API_KEY"))("gpt-4o"))
 gw.local()
 
-client = OpenAI(base_url="http://localhost:1975", api_key="unused")
+client = OpenAI(base_url="http://localhost:1975/v1", api_key="unused")
 
 tools = [
     {

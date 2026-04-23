@@ -31,8 +31,13 @@ class LocalRun:
 
     @property
     def base_url(self) -> str:
-        """OpenAI-compatible base URL for the running gateway."""
-        return f"http://127.0.0.1:{self.port}"
+        """OpenAI-compatible base URL for the running gateway.
+
+        The ``/v1`` suffix matches the OpenAI SDK convention — its own default
+        is ``https://api.openai.com/v1/`` — so ``OpenAI(base_url=gw.base_url)``
+        routes calls to ``/v1/chat/completions`` as ``aigw`` expects.
+        """
+        return f"http://127.0.0.1:{self.port}/v1"
 
     def stop(self) -> None:
         """Stop the underlying subprocess and clean up the temp config file.
