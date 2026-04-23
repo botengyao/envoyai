@@ -397,12 +397,85 @@ a standard deployment even when each data plane runs on-device.
 and aigw / Envoy runtime on the same machine. No network for config;
 the listener is local.
 
-**Topology 2 — central control plane, on-device runtime.** One
-envoyai instance exposes gRPC xDS (or a gRPC `ConfigSource` inside
-aigw, once (B) lands) and serves many edge / laptop / node runtimes.
-Each runtime still handles requests locally — translation via aigw's
-ExtProc filter and upstream TLS both happen next to whoever is
-calling — but policy is owned centrally.
+**Topology 2 — cloud control plane + on-device Envoy.** The headline
+shape for LLM traffic that leaves a device. The control plane is a
+cloud-managed xDS service (Google Cloud
+[Traffic Director](https://cloud.google.com/traffic-director),
+managed Istio — Anthos Service Mesh / Google Cloud Service Mesh, HCP
+Consul, managed Kuma) — or `Gateway.serve_xds(...)` once it lands —
+and Envoy runs *on the device*: laptop, desktop app, edge appliance,
+IoT node, on-prem customer hardware. The xDS connection is
+device-to-cloud over the internet, typically a long-lived gRPC stream
+authenticated with mTLS or short-lived OIDC tokens.
+
+```
+             cloud
+   ┌─────────────────────────────┐
+   │ xDS control plane (managed) │
+   │  e.g. Traffic Director,     │
+   │  managed istiod             │
+   └──────────────┬──────────────┘
+                  │  xDS (ADS v3) over mTLS, long-lived gRPC
+                  │
+       ┌──────────┼───────────┬───────────────┐
+       ▼          ▼           ▼               ▼
+     laptop    desktop     edge node      on-prem appliance
+   ┌────────┐ ┌────────┐  ┌────────┐     ┌────────┐
+   │ Envoy  │ │ Envoy  │  │ Envoy  │ ... │ Envoy  │   ← runs on the device
+   │ [aigw?]│ │ [aigw?]│  │ [aigw?]│     │ [aigw?]│      aigw only if
+   └────┬───┘ └────┬───┘  └────┬───┘     └────┬───┘      heterogeneous
+        ▼          ▼           ▼              ▼          upstreams
+    upstream   upstream    upstream       upstream
+```
+
+Envoy's xDS client is built to survive network hiccups — on
+disconnect it keeps serving from the last-known config — so this
+topology is resilient even over unreliable device networks.
+
+On-device variants (same choice as extended (C) above):
+
+- **aigw sidecar on each device.** Required when upstreams include
+  Anthropic, Bedrock, or Vertex. aigw does the format translation
+  locally via its ExtProc filter, configured by the cloud control
+  plane via xDS resources that reference it. Heavier device
+  footprint; full provider support.
+- **Pure Envoy on each device.** OpenAI-compat upstreams only, or a
+  WASM translation module loaded via xDS. Smaller footprint, simpler
+  operations; narrower provider set unless the WASM module is
+  invested in.
+
+Where this topology fits:
+
+- **LLM calls from a client app.** A desktop or mobile app embeds a
+  tiny Envoy; every LLM request goes through it. Routing, auth,
+  quota, per-region failover, and key rotation all come from the
+  cloud control plane — one xDS update and every user gets the new
+  policy. Keys never live in the app.
+- **Edge inference gateways.** Many regional edge nodes, each with a
+  local Envoy deciding which local vs. cloud model to call, managed
+  from one place.
+- **Hybrid cloud-to-customer-site.** Your service ships an on-prem
+  appliance with Envoy inside; the control plane stays in your cloud
+  and the customer never configures anything.
+
+What envoyai's role looks like in this topology: either **generate
+the xDS resources** the cloud control plane serves (today: render
+YAML that gets loaded into Traffic Director / imported into the mesh)
+or — once `Gateway.serve_xds(...)` lands — **be** the cloud control
+plane itself, running as a hosted service. The choice depends on
+whether the org wants a managed third-party control plane or an
+envoyai-owned one.
+
+Load-bearing question: who owns device enrollment, cert lifecycle,
+and observability shipping. That work is the same whether the control
+plane is Traffic Director or envoyai-hosted; the Envoy data plane
+handles the wire protocol for free.
+
+**Topology 3 — envoyai-owned central control plane, on-device
+runtime.** The envoyai-specific sibling of topology 2: instead of a
+managed mesh product, one envoyai instance exposes gRPC xDS (or a
+gRPC `ConfigSource` inside aigw, once (B) lands) and serves many
+edge / laptop / node runtimes.
 
 ```
                            edge / laptop / node
@@ -419,12 +492,11 @@ calling — but policy is owned centrally.
    source of truth          OpenAI↔native formats next to the upstream
 ```
 
-This is the shape that gets interesting on-device: each node runs
-aigw locally, but config comes from one place. "Use model X in eu-west,
-model Y everywhere else" or "rotate the Anthropic key fleet-wide" is a
-single Python edit pushed down as an xDS snapshot — no per-node deploy,
-no staggered restarts. Envoy's xDS subscription makes this a runtime
-primitive; the application layer needs no polling or reload logic.
+"Use model X in eu-west, model Y everywhere else" or "rotate the
+Anthropic key fleet-wide" is a single Python edit pushed down as an
+xDS snapshot — no per-node deploy, no staggered restarts. Envoy's xDS
+subscription makes this a runtime primitive; the application layer
+needs no polling or reload logic.
 
 Mixed fleets work on the same control plane: aigw nodes where
 upstreams include Anthropic / Bedrock / Vertex, plain-Envoy nodes
@@ -432,21 +504,21 @@ where the upstream set is OpenAI-compatible only and the ExtProc
 filter isn't needed. (B) enables the aigw side; (C) enables the plain
 Envoy side.
 
-**Topology 3 — in-cluster (Kubernetes-native).** aigw runs as a
+**Topology 4 — in-cluster (Kubernetes-native).** aigw runs as a
 cluster controller; envoyai's `render_k8s()` / `apply()` / `deploy()`
 (roadmap) writes CRDs into etcd; aigw watches them. Compatible with
 GitOps; standard Kubernetes operational shape for teams that already
 live there.
 
-**Topology 4 — third-party xDS control plane (e.g., Traffic Director,
-istiod).** Organizations that already run a service mesh — Google
-Cloud [Traffic Director](https://cloud.google.com/traffic-director),
-Istio (istiod), HashiCorp Consul Connect, Kuma — have a production
-xDS control plane already configuring Envoys across the fleet.
-envoyai integrates *with* that control plane rather than replacing it.
-Two integration patterns, complementary:
+**Topology 5 — third-party xDS control plane inside a mesh (e.g.,
+Traffic Director, istiod).** Organizations that already run a service
+mesh — Google Cloud Traffic Director, Istio (istiod), HashiCorp
+Consul Connect, Kuma — have a production xDS control plane already
+configuring Envoys across the fleet. envoyai integrates *with* that
+control plane rather than replacing it. Two integration patterns,
+complementary:
 
-**(4a) envoyai as a mesh-native backend.** The existing control plane
+**(5a) envoyai as a mesh-native backend.** The existing control plane
 doesn't touch the aigw Envoy directly; instead it treats envoyai as a
 service in the mesh. Mesh-sidecar Envoys on the client side get the
 usual routing / mTLS / authz from the mesh control plane; envoyai
@@ -468,7 +540,7 @@ Cleanest brownfield story — the mesh keeps owning north-south / east-west
 transport (mTLS, authz, org telemetry, SRE runbooks), envoyai keeps
 owning format translation, per-model routing, and upstream auth injection.
 
-**(4b) Dual-source xDS into the aigw Envoy.** The Envoy inside aigw
+**(5b) Dual-source xDS into the aigw Envoy.** The Envoy inside aigw
 subscribes to **two** xDS sources at once: the mesh control plane (for
 listeners, clusters, endpoints, mTLS, rate limits, access logs) and
 aigw's own in-process xDS (for the AI-specific ExtProc filter state
@@ -497,80 +569,6 @@ org-wide telemetry, quota enforcement — without envoyai reimplementing
 any of it. aigw still adds the AI-layer value; Traffic Director keeps
 its job.
 
-**Topology 5 — cloud control plane + on-device Envoy.** The
-combination worth naming explicitly: the control plane is a
-cloud-managed xDS service (Google Cloud
-[Traffic Director](https://cloud.google.com/traffic-director),
-managed Istio — Anthos Service Mesh / Google Cloud Service Mesh, HCP
-Consul, managed Kuma) and Envoy runs *on the device* — laptop,
-desktop app, edge appliance, IoT node, on-prem customer hardware.
-The xDS connection is device-to-cloud over the internet, typically a
-long-lived gRPC stream authenticated with mTLS or short-lived OIDC
-tokens.
-
-```
-             cloud
-   ┌─────────────────────────────┐
-   │ xDS control plane (managed) │
-   │  e.g. Traffic Director,     │
-   │  managed istiod             │
-   └──────────────┬──────────────┘
-                  │  xDS (ADS v3) over mTLS, long-lived gRPC
-                  │
-       ┌──────────┼───────────┬───────────────┐
-       ▼          ▼           ▼               ▼
-     laptop    desktop     edge node      on-prem appliance
-   ┌────────┐ ┌────────┐  ┌────────┐     ┌────────┐
-   │ Envoy  │ │ Envoy  │  │ Envoy  │ ... │ Envoy  │   ← runs on the device
-   │ [aigw?]│ │ [aigw?]│  │ [aigw?]│     │ [aigw?]│      aigw only if
-   └────┬───┘ └────┬───┘  └────┬───┘     └────┬───┘      heterogeneous
-        ▼          ▼           ▼              ▼          upstreams
-    upstream   upstream    upstream       upstream
-```
-
-Envoy's xDS client is built to survive network hiccups — on
-disconnect it keeps serving from the last-known config — so this
-topology is resilient even from unreliable device networks.
-
-On-device variants (same choice as extended (C) above):
-
-- **aigw sidecar on each device.** Required when upstreams include
-  Anthropic, Bedrock, or Vertex. aigw does the format translation
-  locally via its ExtProc filter, configured by the cloud control
-  plane via xDS resources that reference it. Heavier device
-  footprint; full provider support.
-- **Pure Envoy on each device.** OpenAI-compat upstreams only, or a
-  WASM translation module loaded via xDS. Smaller footprint, simpler
-  operations; narrower provider set unless the WASM module is
-  invested in.
-
-Where this topology fits:
-
-- **LLM calls from a client app.** A desktop or mobile app embeds a
-  tiny Envoy; every LLM request goes through it. Routing, auth,
-  quota, per-region failover, and key rotation all come from the
-  cloud control plane — one xDS update and every user gets the new
-  policy. Keys never live in the app.
-- **Edge inference gateways.** Many regional edge nodes, each with a
-  local Envoy deciding which local vs. cloud model to call, managed
-  from one place.
-- **Hybrid cloud-to-customer-site.** Your service ships an on-prem
-  appliance with Envoy inside; the control plane stays in your cloud
-  and the customer never configures anything.
-
-What envoyai's role looks like in topology 5: either **generate the
-xDS resources** the cloud control plane serves (today: render YAML
-that gets loaded into Traffic Director / imported into the mesh) or
-— once `Gateway.serve_xds(...)` lands — **be** the cloud control plane
-itself, running as a hosted service. The choice depends on whether
-the org wants a managed third-party control plane or an envoyai-owned
-one.
-
-Load-bearing question: who owns device enrollment, cert lifecycle,
-and observability shipping. That work is the same whether the control
-plane is Traffic Director or envoyai-hosted; the Envoy data plane
-handles the wire protocol for free.
-
 ### The honest endgame
 
 A hybrid: **envoyai as a gRPC control plane, aigw as the runtime**,
@@ -578,9 +576,10 @@ where aigw accepts either its K8s watch or envoyai's gRPC stream as
 interchangeable `ConfigSource`s. Typed Python stays the source of
 truth; aigw keeps owning data-plane translation. (C) remains on the
 board as the lean option for OpenAI-compat-only deployments. (A) is
-the ladder rung we're on today. Topology 2 is what that endgame
-unlocks — a central envoyai controlling a fleet of on-device runtimes
-with no K8s in the middle.
+the ladder rung we're on today. Topologies 2 and 3 are what that
+endgame unlocks — a central control plane (cloud-managed or
+envoyai-owned) driving a fleet of on-device runtimes with no K8s in
+the middle.
 
 ---
 
