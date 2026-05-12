@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Mapping, Sequence, Union
 
 from envoyai._internal.runtime import LocalRun
 from envoyai.auth import Header
-from envoyai.errors import ConfigError, ModelNotFound
+from envoyai.errors import ConfigError, ModelNotFound, LocalRunError
 from envoyai.policy import Budget, Privacy, RetryPolicy, Timeouts
 from envoyai.providers.base import ModelRef
 
@@ -326,9 +326,24 @@ class Gateway:
         )
         try:
             aigw_process.probe_ready(self.port, timeout_s=ready_timeout_s)
-        except Exception:
+        except Exception as e:
+            stderr_text = ""
+            if proc.stderr:
+                import os
+                try:
+                    os.set_blocking(proc.stderr.fileno(), False)
+                    stderr_bytes = proc.stderr.read()
+                    if stderr_bytes:
+                        stderr_text = stderr_bytes.decode("utf-8", errors="replace")
+                except Exception as le:
+                    stderr_text = f"<failed to read stderr: {le}>"
             aigw_process.stop_background(proc)
             config_path.unlink(missing_ok=True)
+            if stderr_text:
+                raise LocalRunError(
+                    f"Gateway failed to start (aigw did not become ready on port {self.port}). "
+                    f"aigw stderr:\n{stderr_text}"
+                ) from e
             raise
         run = LocalRun(
             port=self.port,

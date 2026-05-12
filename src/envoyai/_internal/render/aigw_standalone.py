@@ -131,6 +131,7 @@ def render_resources(gateway: Any, *, namespace: str = "default") -> list[dict[s
             _backend_traffic_policy(gateway_name, namespace, retry_policy)
         )
     resources.append(_gateway_cr(gateway_name, namespace, listener_port))
+    resources.append(_gateway_class_cr("envoy-ai-gateway"))
     return resources
 
 
@@ -289,11 +290,12 @@ def _provider_resources(
     backend_name: str, namespace: str, provider: Any
 ) -> list[dict[str, Any]]:
     spec = _API_KEY_PROVIDERS[type(provider)]
-    hostname = _hostname(provider.base_url, default=spec.default_hostname)
+    hostname, port, is_tls = _parse_url(provider.base_url, default_host=spec.default_hostname)
     secret_name = f"{backend_name}-apikey"
     env_var = provider.api_key
     assert isinstance(env_var, EnvVar)
-    return [
+    
+    resources = [
         {
             "apiVersion": "aigateway.envoyproxy.io/v1beta1",
             "kind": "AIServiceBackend",
@@ -329,9 +331,12 @@ def _provider_resources(
             "apiVersion": "gateway.envoyproxy.io/v1alpha1",
             "kind": "Backend",
             "metadata": {"name": backend_name, "namespace": namespace},
-            "spec": {"endpoints": [{"fqdn": {"hostname": hostname, "port": 443}}]},
+            "spec": {"endpoints": [{"fqdn": {"hostname": hostname, "port": port}}]},
         },
-        {
+    ]
+    
+    if is_tls:
+        resources.append({
             "apiVersion": "gateway.networking.k8s.io/v1alpha3",
             "kind": "BackendTLSPolicy",
             "metadata": {"name": f"{backend_name}-tls", "namespace": namespace},
@@ -348,15 +353,17 @@ def _provider_resources(
                     "hostname": hostname,
                 },
             },
-        },
-        {
-            "apiVersion": "v1",
-            "kind": "Secret",
-            "metadata": {"name": secret_name, "namespace": namespace},
-            "type": "Opaque",
-            "stringData": {"apiKey": "${" + env_var.var + "}"},
-        },
-    ]
+        })
+        
+    resources.append({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {"name": secret_name, "namespace": namespace},
+        "type": "Opaque",
+        "stringData": {"apiKey": "${" + env_var.var + "}"},
+    })
+    
+    return resources
 
 
 def _gateway_cr(gateway_name: str, namespace: str, port: int) -> dict[str, Any]:
@@ -375,6 +382,17 @@ def _gateway_cr(gateway_name: str, namespace: str, port: int) -> dict[str, Any]:
                 }
             ],
         },
+    }
+
+
+def _gateway_class_cr(name: str) -> dict[str, Any]:
+    return {
+        "apiVersion": "gateway.networking.k8s.io/v1",
+        "kind": "GatewayClass",
+        "metadata": {"name": name},
+        "spec": {
+            "controllerName": "gateway.envoyproxy.io/gatewayclass-controller"
+        }
     }
 
 
@@ -484,6 +502,19 @@ def _retry_on(policy: RetryPolicy) -> dict[str, Any]:
     return out
 
 
-def _hostname(base_url: str, *, default: str) -> str:
+def _parse_url(base_url: str, *, default_host: str) -> tuple[str, int, bool]:
+    """Return (hostname, port, is_tls)."""
+    if not base_url:
+        return default_host, 443, True
+    
     parsed = urlparse(base_url)
-    return parsed.hostname or default
+    hostname = parsed.hostname or default_host
+    
+    is_tls = parsed.scheme != "http"
+    
+    if parsed.port is not None:
+        port = parsed.port
+    else:
+        port = 443 if is_tls else 80
+        
+    return hostname, port, is_tls
