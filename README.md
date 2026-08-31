@@ -60,7 +60,10 @@ vars at startup and never leave it.
 
 For a deeper dive with ASCII diagrams of the build pipeline, the
 request path, and every CRD that gets rendered, see
-[ARCHITECTURE.md](ARCHITECTURE.md).
+[ARCHITECTURE.md](ARCHITECTURE.md). For what the wire formats on either
+side of that translation actually look like — every provider, vendor,
+self-hosted server, and gateway, with examples — see
+[INFERENCE_APIS.md](INFERENCE_APIS.md).
 
 ## Full example
 

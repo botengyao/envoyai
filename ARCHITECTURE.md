@@ -596,6 +596,7 @@ the middle.
 
 ## Further reading
 
+- Wire formats on both sides of the translation: [`INFERENCE_APIS.md`](INFERENCE_APIS.md)
 - Renderer source: [`src/envoyai/_internal/render/aigw_standalone.py`](src/envoyai/_internal/render/aigw_standalone.py)
 - Subprocess lifecycle: [`src/envoyai/_internal/aigw_process.py`](src/envoyai/_internal/aigw_process.py)
 - `aigw` binary resolver: [`src/envoyai/_internal/aigw_bootstrap.py`](src/envoyai/_internal/aigw_bootstrap.py)
